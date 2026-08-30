@@ -1,0 +1,42 @@
+# WA2-ns — PC 构建(Linux / MinGW;Windows 本机建议用 tests\build_test.bat 做核心测试)
+# 依赖:SDL2 / SDL2_image / SDL2_ttf / SDL2_mixer
+#   Debian/Ubuntu: sudo apt install libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libsdl2-mixer-dev
+#   macOS:         brew install sdl2 sdl2_image sdl2_ttf sdl2_mixer
+# 用法:
+#   make -f Makefile.pc                       # 生成 wa2(可执行)
+#   make -f Makefile.pc test                  # 编译并运行无头核心测试
+#   ./wa2 [数据目录]                           # 默认 Wa2Res/
+
+CXX      ?= g++
+CXXFLAGS ?= -std=c++17 -O2 -Wall -Isrc
+LDFLAGS  :=
+LIBS     := $(shell pkg-config --libs sdl2 SDL2_image SDL2_ttf SDL2_mixer 2>/dev/null || \
+             echo -lSDL2_image -lSDL2_ttf -lSDL2_mixer -lSDL2)
+SDLFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null)
+
+CORE_SRC := \
+	src/wa2/util.cpp src/wa2/archive.cpp src/wa2/res.cpp \
+	src/wa2/script.cpp src/wa2/funcs.cpp src/wa2/state.cpp \
+	src/wa2/sjis.cpp src/wa2/sjis_table.cpp
+
+SDL_SRC  := \
+	src/wa2/gfx.cpp src/wa2/audio.cpp src/wa2/engine.cpp \
+	src/main.cpp
+
+HEAD     := tests/test_core.cpp
+
+all: wa2
+
+wa2: $(CORE_SRC) $(SDL_SRC) $(wildcard src/wa2/*.h)
+	$(CXX) $(CXXFLAGS) $(SDLFLAGS) -o $@ $(CORE_SRC) $(SDL_SRC) $(LDFLAGS) $(LIBS)
+
+test: test_core
+	./test_core out/Wa2Res
+
+test_core: $(HEAD) $(CORE_SRC)
+	$(CXX) $(CXXFLAGS) -o $@ $(HEAD) $(CORE_SRC)
+
+clean:
+	rm -f wa2 test_core
+
+.PHONY: all test clean

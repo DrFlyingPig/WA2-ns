@@ -1,0 +1,32 @@
+# 构建产物
+build/
+build_switch/
+*.o
+*.obj
+*.elf
+*.nso
+*.nro
+*.nacp
+*.map
+*.exe
+*.pdb
+*.ilk
+
+# 本地测试输出
+out/
+test_out/
+*.log
+__pycache__/
+
+# 第三方参考源码(上游未附许可证,不得随仓库再分发)
+reference/
+
+# 游戏数据(切勿提交版权资源!)
+Wa2Res/
+*.pac
+*.pak
+*.bnr
+*.tga
+*.ogg
+font.ttf
+romfs/demo/

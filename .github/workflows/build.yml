@@ -1,0 +1,73 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-core:
+    name: Core tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build headless core tests
+        run: |
+          g++ -std=c++17 -O1 -Wall -Isrc \
+            tests/test_core.cpp \
+            src/wa2/util.cpp src/wa2/archive.cpp src/wa2/res.cpp \
+            src/wa2/script.cpp src/wa2/funcs.cpp src/wa2/state.cpp \
+            src/wa2/sjis.cpp src/wa2/sjis_table.cpp \
+            -o test_core
+      - name: Generate demo data
+        run: |
+          python3 -m pip install --quiet pillow numpy
+          python3 tools/gen_demo.py
+      - name: Run tests
+        run: ./test_core out/Wa2Res
+
+  linux:
+    name: PC build (Linux, SDL2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libsdl2-mixer-dev
+      - name: Build
+        run: make -f Makefile.pc
+
+  switch:
+    name: Switch build (devkitPro)
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate demo data into romfs
+        run: |
+          python3 -m pip install --quiet pillow numpy
+          python3 tools/gen_demo.py
+          # demo 剧本为日文,嵌入一个 OFL 授权的日文字体(可再分发)
+          curl -sL --retry 3 -o out/Wa2Res/font.ttf \
+            "https://github.com/google/fonts/raw/main/ofl/zenmarugothic/ZenMaruGothic-Regular.ttf"
+          test -s out/Wa2Res/font.ttf
+          mkdir -p romfs
+          cp -r out/Wa2Res romfs/demo
+      - name: Build wa2.nro
+        run: |
+          make -f Makefile.switch -j$(nproc)
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wa2-switch
+          path: |
+            wa2.nro
+          if-no-files-found: error
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: wa2.nro

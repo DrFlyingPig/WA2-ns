@@ -1,0 +1,11 @@
+* text=auto
+Makefile.* text eol=lf
+*.mk text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.bat text eol=crlf
+*.cpp text
+*.h text
+*.md text
+*.jpg binary
