@@ -27,6 +27,8 @@ SRC = [
 ARCH = ['-march=armv8-a+crc+crypto', '-mtune=cortex-a57', '-mtp=soft', '-fPIE']
 CXXFLAGS = ['-std=gnu++17', '-O2', '-Wall', '-fno-rtti', '-fno-exceptions',
             '-D__SWITCH__', '-DSWITCH'] + ARCH
+if os.environ.get('WA2_MINIMAL'):
+    CXXFLAGS = CXXFLAGS + ['-DWA2_MINIMAL']
 LIBS = ['-lSDL2_image', '-lSDL2_ttf', '-lSDL2_mixer', '-lSDL2',
         '-lvorbisidec', '-logg', '-lmodplug', '-lmpg123',
         '-lopusfile', '-lopus',

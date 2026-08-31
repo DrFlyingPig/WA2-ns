@@ -59,7 +59,7 @@ jobs:
           cp -r out/Wa2Res romfs/demo
       - name: Build wa2.nro
         run: |
-          make -f Makefile.switch -j$(nproc)
+          make -f Makefile.switch DEFINES='-DWA2_MINIMAL' -j$(nproc)
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

@@ -76,6 +76,25 @@ bool Engine::LoadGameData() {
 }
 
 void Engine::Run() {
+#ifdef WA2_MINIMAL
+    // 最小对照:只初始化 SDL+字体、画一帧标题、空转后退出。
+    // 不加载 demo/脚本/纹理循环,用于判定崩溃属环境(hbmenu/Atmosphere)还是引擎资源加载。
+    Log(LogLevel::Info, "MINIMAL: init OK, spinning with title");
+    LogFlush();
+    uint32_t t0 = SDL_GetTicks();
+    while (state_ != State::Quit) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) { if (ev.type == SDL_QUIT) state_ = State::Quit; }
+        uint32_t now = SDL_GetTicks();
+        gfx_.Clear();
+        gfx_.FillRect(0, 0, kVirtualW, kVirtualH, 10, 14, 30, 255);
+        gfx_.DrawText("WA2-ns minimal probe", kVirtualW / 2 - 220, kVirtualH / 2 - 40, 40, 255, 255, 255);
+        gfx_.Present();
+        if (now - t0 >= 8000) { Log(LogLevel::Info, "MINIMAL: exiting after 8s"); LogFlush(); break; }
+        SDL_Delay(16);
+    }
+    return;
+#endif
     uint32_t last = SDL_GetTicks();
 #ifdef __SWITCH__
     while (state_ != State::Quit && appletMainLoop()) {
