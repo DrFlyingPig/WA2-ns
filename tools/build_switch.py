@@ -31,6 +31,8 @@ if os.environ.get('WA2_MINIMAL'):
     CXXFLAGS = CXXFLAGS + ['-DWA2_MINIMAL']
 if os.environ.get('WA2_MIN2'):
     CXXFLAGS = CXXFLAGS + ['-DWA2_MIN2']
+if os.environ.get('WA2_MIN3'):
+    CXXFLAGS = CXXFLAGS + ['-DWA2_MIN3']
 LIBS = ['-lSDL2_image', '-lSDL2_ttf', '-lSDL2_mixer', '-lSDL2',
         '-lvorbisidec', '-logg', '-lmodplug', '-lmpg123',
         '-lopusfile', '-lopus',

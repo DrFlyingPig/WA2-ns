@@ -135,6 +135,41 @@ void Engine::Run() {
     }
     return;
 #endif
+#ifdef WA2_MIN3
+    // 最小复现单元3:纯纹理解码+缓存重建+绘制循环(无脚本VM)。
+    // 用于二分:MIN2(脚本+点击)已证明稳定;若 MIN3(纹理)崩 => 根因在纹理解码/缓存/绘制/CaptureScreen。
+    Log(LogLevel::Info, "MIN3: texture decode+cache rebuild+draw loop, no script");
+    LogFlush();
+    const char* texNames[3] = {"b000100.tga", "har000001.tga", "kaz000001.tga"};
+    uint32_t t0 = SDL_GetTicks();
+    uint32_t sceneIdx = 0;
+    uint64_t frames = 0;
+    state_ = State::Game; ui_ = UiMode::None;
+    while (state_ != State::Quit) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) { if (ev.type == SDL_QUIT) state_ = State::Quit; }
+        uint32_t now = SDL_GetTicks();
+        // 模拟场景切换:每 400ms 切换到下一资源,并触发缓存重建(ClearCache)与过渡(CaptureScreen)
+        if ((now - t0) / 400u != (uint32_t)sceneIdx) {
+            sceneIdx = (now - t0) / 400u;
+            gfx_.ClearCache();
+        }
+        int idx = (int)(sceneIdx % 3);
+        Tex* t = gfx_.Get(texNames[idx], res_, "");
+        gfx_.Clear();
+        if (t) { gfx_.DrawTexture(t, 0, 0, 0, 0, 1.0f); }
+        else {
+            gfx_.FillRect(0, 0, kVirtualW, kVirtualH, 40, 20, 60, 255);
+        }
+        // 触发一次过渡截屏(模拟 setup bg 的 CaptureScreen 路径)
+        if ((frames % 300) == 0) { SDL_Texture* snap = gfx_.CaptureScreen(); gfx_.ReleaseSnapshot(snap); }
+        gfx_.Present();
+        frames++;
+        SDL_Delay(16);
+        if ((now - t0) > 60000) { Log(LogLevel::Info, "MIN3: exiting after 60s"); LogFlush(); break; }
+    }
+    return;
+#endif
     uint32_t last = SDL_GetTicks();
 #ifdef __SWITCH__
     while (state_ != State::Quit && appletMainLoop()) {
