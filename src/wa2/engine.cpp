@@ -299,6 +299,7 @@ void Engine::SLoadScript(const std::string& name, int point) {
     stack_.clear();
     scene_.ClearChars();
     scene_.selectItems.clear();
+    gfx_.ClearCache();   // 释放旧场景的图/立绘纹理,避免内存随推进累积
     auto s = std::make_unique<Script>();
     s->SetGameFlags(&gameFlags_);
     if (!s->Load(res_, name, point)) {
@@ -336,6 +337,7 @@ void Engine::GoTitle() {
     audio_.StopBgm(500);
     stack_.clear();
     graveyard_.clear();
+    gfx_.ClearCache();   // 回标题时释放当前场景纹理
 }
 
 void Engine::ApplyPending() {

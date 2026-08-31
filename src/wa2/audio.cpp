@@ -15,7 +15,7 @@ static void OnMusicFinished() {
 
 bool Audio::Init() {
     Mix_Init(MIX_INIT_OGG);   // 初始化需要的解码器(OGG);demo 用 WAV 亦无害
-    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) != 0) {
+    if (Mix_OpenAudio(48000, MIX_DEFAULT_FORMAT, 2, 4096) != 0) {
         Log(LogLevel::Error, "audio: open failed: %s", Mix_GetError());
         return false;
     }
