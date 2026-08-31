@@ -88,10 +88,23 @@ bool Gfx::Init(const std::string& fontPath) {
     window_ = SDL_CreateWindow("WA2-ns", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                kVirtualW, kVirtualH, flags);
     if (!window_) { Log(LogLevel::Error, "CreateWindow failed: %s", SDL_GetError()); return false; }
+    // 优先请求硬件加速(带 VSYNC);失败则记下原因退回软件,便于真机诊断后端
     renderer_ = SDL_CreateRenderer(window_, -1,
                                    SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!renderer_) renderer_ = SDL_CreateRenderer(window_, -1, 0);
+    if (!renderer_) {
+        Log(LogLevel::Warn, "CreateRenderer(accel|vsync) failed, falling back: %s", SDL_GetError());
+        renderer_ = SDL_CreateRenderer(window_, -1, 0);
+    }
     if (!renderer_) { Log(LogLevel::Error, "CreateRenderer failed: %s", SDL_GetError()); return false; }
+    // 记录实际后端与能力(真机上用 wa2.log 判断是否走了 GPU/GLES)
+    SDL_RendererInfo ri; SDL_zero(ri);
+    if (SDL_GetRendererInfo(renderer_, &ri) == 0) {
+        Log(LogLevel::Info, "gfx: backend=%s accelerated=%d vsync=%d video=%s",
+            (ri.name && *ri.name) ? ri.name : "(?)",
+            (ri.flags & SDL_RENDERER_ACCELERATED) ? 1 : 0,
+            (ri.flags & SDL_RENDERER_PRESENTVSYNC) ? 1 : 0,
+            SDL_GetCurrentVideoDriver());
+    }
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     if (!GetFont(32)) return false;   // 字体必须可用
     Log(LogLevel::Info, "gfx: initialized (%s)", SDL_GetCurrentVideoDriver());
