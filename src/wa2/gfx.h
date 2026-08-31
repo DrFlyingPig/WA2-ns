@@ -62,7 +62,7 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     TTF_Font* font_ = nullptr;   // SDL_ttf 公开类型
-    std::unordered_map<std::string, Tex> cache_;
+    std::map<std::string, Tex> cache_;   // std::map:不重哈希,Get 返回的指针在插入/删除后仍稳定(否则悬垂 UAF)
     std::unordered_set<std::string> missing_;   // 解码失败的资源:本会话不再每帧重试
     Tex snapshotTex_;
     SDL_Texture* snapshot_ = nullptr;

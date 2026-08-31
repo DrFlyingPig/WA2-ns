@@ -136,13 +136,7 @@ void Gfx::Shutdown() {
 }
 
 Tex* Gfx::Get(const std::string& lowerName, Res& res, const std::string& effectMode) {
-    // TEMP PROBE: 检查 cache_ 重哈希(会使已返回的 Tex* 悬垂)
-    size_t bc_before = cache_.bucket_count();
-    auto bucket_changed = [&](){ size_t bc = cache_.bucket_count(); if (bc != bc_before) {
-        Log(LogLevel::Info, "GFX cache rehash %zu->%zu (size=%zu) key=%s",
-            bc_before, bc, cache_.size(), lowerName.c_str());
-        return true; } return false; };
-
+    // cache_ 为 std::map:节点地址稳定,返回的 Tex* 在后续插入后不会悬垂(UAF 根治)
     auto it = cache_.find(lowerName);
     if (it != cache_.end()) return &it->second;
     if (missing_.count(lowerName)) return nullptr;   // 本会话已确认失败,不再每帧重试
@@ -192,7 +186,6 @@ Tex* Gfx::Get(const std::string& lowerName, Res& res, const std::string& effectM
     SDL_FreeSurface(surf);
     if (!tex) return nullptr;
     cache_[lowerName] = t;
-    bucket_changed();   // 若新 key 触发 rehash,打印
     Log(LogLevel::Info, "gfx: loaded %s (%dx%d)", lowerName.c_str(), t.w, t.h);
     return &cache_[lowerName];
 }
