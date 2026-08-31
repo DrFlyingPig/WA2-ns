@@ -15,7 +15,9 @@ static void OnMusicFinished() {
 }
 
 bool Audio::Init() {
-    noAudio_ = std::getenv("WA2_NOAUDIO") != nullptr;   // 临时: ASan 避开 SDL_mixer 音频线程
+    // TEMP-DIAG-AUDIO: 本次对照诊断包强制音频 no-op(不经 SDL_mixer/不开音频线程)
+    // 用于分离"音频线程"是否是多轮随机系统崩溃的来源。还原时删掉此行。
+    noAudio_ = true;
     if (noAudio_) return true;
     Mix_Init(MIX_INIT_OGG);   // 初始化需要的解码器(OGG);demo 用 WAV 亦无害
     if (Mix_OpenAudio(48000, MIX_DEFAULT_FORMAT, 2, 4096) != 0) {
