@@ -4,6 +4,9 @@
 #include "funcs.h"
 
 #include <SDL2/SDL.h>
+#ifdef __SWITCH__
+#include <switch.h>   // appletMainLoop: 正确的 Switch 生命周期
+#endif
 #include <algorithm>
 
 namespace wa2 {
@@ -74,7 +77,11 @@ bool Engine::LoadGameData() {
 
 void Engine::Run() {
     uint32_t last = SDL_GetTicks();
+#ifdef __SWITCH__
+    while (state_ != State::Quit && appletMainLoop()) {
+#else
     while (state_ != State::Quit) {
+#endif
         uint32_t frameStart = SDL_GetTicks();
         uint32_t now = SDL_GetTicks();
         float dt = (now - last) / 1000.0f;
@@ -436,6 +443,7 @@ void Engine::StopSkip() { skipMode_ = false; }
 void Engine::SetupNewBg(const std::string& path, int frame, int x, int y, int offset,
                         float sx, float sy, bool keepChar) {
     std::string oldPath = bg_.path;
+    Log(LogLevel::Info, "engine: setup bg '%s' trans=%d", path.c_str(), frame);
     bg_.path = path;
     bg_.x = (float)(x - offset);
     bg_.y = (float)y;

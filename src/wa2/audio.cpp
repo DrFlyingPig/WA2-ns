@@ -14,6 +14,7 @@ static void OnMusicFinished() {
 }
 
 bool Audio::Init() {
+    Mix_Init(MIX_INIT_OGG);   // 初始化需要的解码器(OGG);demo 用 WAV 亦无害
     if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) != 0) {
         Log(LogLevel::Error, "audio: open failed: %s", Mix_GetError());
         return false;
@@ -70,6 +71,7 @@ bool Audio::PlayBgm(int id, bool loop, int vol, Res& res) {
         Log(LogLevel::Warn, "audio: bgm %d missing", id);
         return false;
     }
+    Log(LogLevel::Info, "audio: bgm %d found %s", id, a.name.c_str());
     std::vector<uint8_t> data = res.Load(a.name);
     SDL_RWops* rw = SDL_RWFromMem(data.data(), (int)data.size());
     bgmA_ = Mix_LoadMUS_RW(rw, 1);   // frees rw
@@ -77,6 +79,7 @@ bool Audio::PlayBgm(int id, bool loop, int vol, Res& res) {
         Log(LogLevel::Warn, "audio: bgm decode failed: %s", Mix_GetError());
         return false;
     }
+    Log(LogLevel::Info, "audio: bgm %d music loaded", id);
     // B(循环段):存在则 A 播一次后接 B 循环;否则 A 自身作为整曲循环
     std::string loopPart = Res::BgmName(id, true);         // bgm_xxx_b.ogg
     std::vector<std::string> lc = {loopPart};
@@ -88,8 +91,10 @@ bool Audio::PlayBgm(int id, bool loop, int vol, Res& res) {
         SDL_RWops* rwb = SDL_RWFromMem(db.data(), (int)db.size());
         bgmB_ = Mix_LoadMUS_RW(rwb, 1);
         if (!bgmB_) Log(LogLevel::Warn, "audio: bgm B decode failed: %s", Mix_GetError());
+        Log(LogLevel::Info, "audio: bgm %d playing A (B next)", id);
     } else {
         Mix_PlayMusic(bgmA_, loop ? -1 : 0);
+        Log(LogLevel::Info, "audio: bgm %d playing single (loop=%d)", id, (int)loop);
     }
     return true;
 }
