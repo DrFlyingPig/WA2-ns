@@ -299,6 +299,7 @@ void Engine::SLoadScript(const std::string& name, int point) {
     stack_.clear();
     scene_.ClearChars();
     scene_.selectItems.clear();
+    for (auto& c : chars_) { c.show = false; c.alpha = 0.f; c.targetAlpha = 0.f; c.fadePerSec = 0.f; } // 复位渲染立绘槽(否则多轮后无空槽→立绘消失)
     gfx_.ClearCache();   // 释放旧场景的图/立绘纹理,避免内存随推进累积
     auto s = std::make_unique<Script>();
     s->SetGameFlags(&gameFlags_);
@@ -334,11 +335,13 @@ void Engine::CallPoint(int point) {
 void Engine::GoTitle() {
     state_ = State::Title;
     ui_ = UiMode::Title;
-    audio_.StopBgm(500);
+    // 回标题彻底复位音频(BGM+SE+语音),避免多次运行间音频通道残留/腐蚀
+    audio_.StopAll();
     // 延迟销毁:当前脚本还在执行其 Tick,直接 clear 会 use-after-free
     // (gotitle 是当前脚本自己触发的宿主调用)
     for (auto& s : stack_) graveyard_.push_back(std::move(s));
     stack_.clear();
+    for (auto& c : chars_) { c.show = false; c.alpha = 0.f; c.targetAlpha = 0.f; c.fadePerSec = 0.f; } // 复位立绘槽
     gfx_.ClearCache();   // 回标题时释放当前场景纹理
 }
 
