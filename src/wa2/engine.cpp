@@ -698,6 +698,11 @@ void Engine::Render() {
     for (int oi = 0; oi < kMaxChars; oi++) {
         CharDraw& c = chars_[kCharOrder[oi]];
         if (!c.show || c.alpha <= 0) continue;
+        // TEMP PROBE: kCharPos 越界检测(防垃圾坐标传给 SDL)
+        if (c.pos < 0 || c.pos >= kMaxChars) {
+            Log(LogLevel::Error, "GFX char pos OOB c.pos=%d id=%d no=%d", c.pos, c.id, c.no);
+            continue;
+        }
         std::string path = Res::CharName(c.id, c.no);
         Tex* t = gfx_.Get(path, res_, effectMode_);
         if (!t) continue;

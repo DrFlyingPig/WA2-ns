@@ -5,6 +5,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_ttf.h>
+#include <cmath>
 
 namespace wa2 {
 
@@ -135,6 +136,13 @@ void Gfx::Shutdown() {
 }
 
 Tex* Gfx::Get(const std::string& lowerName, Res& res, const std::string& effectMode) {
+    // TEMP PROBE: 检查 cache_ 重哈希(会使已返回的 Tex* 悬垂)
+    size_t bc_before = cache_.bucket_count();
+    auto bucket_changed = [&](){ size_t bc = cache_.bucket_count(); if (bc != bc_before) {
+        Log(LogLevel::Info, "GFX cache rehash %zu->%zu (size=%zu) key=%s",
+            bc_before, bc, cache_.size(), lowerName.c_str());
+        return true; } return false; };
+
     auto it = cache_.find(lowerName);
     if (it != cache_.end()) return &it->second;
     if (missing_.count(lowerName)) return nullptr;   // 本会话已确认失败,不再每帧重试
@@ -184,6 +192,7 @@ Tex* Gfx::Get(const std::string& lowerName, Res& res, const std::string& effectM
     SDL_FreeSurface(surf);
     if (!tex) return nullptr;
     cache_[lowerName] = t;
+    bucket_changed();   // 若新 key 触发 rehash,打印
     Log(LogLevel::Info, "gfx: loaded %s (%dx%d)", lowerName.c_str(), t.w, t.h);
     return &cache_[lowerName];
 }
@@ -222,8 +231,11 @@ SDL_Texture* Gfx::CaptureScreen() {
     }
     // 从当前后缓冲读回画面
     SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, kVirtualW, kVirtualH, 32, SDL_PIXELFORMAT_RGBA8888);
-    SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_RGBA8888, s->pixels, s->pitch);
-    SDL_UpdateTexture(snapshot_, nullptr, s->pixels, s->pitch);
+    if (!s) { Log(LogLevel::Error, "GFX CaptureScreen CreateSurface fail: %s", SDL_GetError()); return snapshot_; }
+    if (SDL_RenderReadPixels(renderer_, nullptr, SDL_PIXELFORMAT_RGBA8888, s->pixels, s->pitch) != 0)
+        Log(LogLevel::Error, "GFX RenderReadPixels fail: %s", SDL_GetError());
+    if (SDL_UpdateTexture(snapshot_, nullptr, s->pixels, s->pitch) != 0)
+        Log(LogLevel::Error, "GFX UpdateTexture fail: %s", SDL_GetError());
     SDL_FreeSurface(s);
     SDL_SetTextureBlendMode(snapshot_, SDL_BLENDMODE_BLEND);
     return snapshot_;
@@ -234,8 +246,14 @@ void Gfx::ReleaseSnapshot(SDL_Texture* t) { (void)t; /* 复用,不销毁 */ }
 void Gfx::DrawTexture(Tex* t, int x, int y, int w, int h, float alpha) {
     if (!t || !t->tex) return;
     SDL_Rect dst{x, y, w > 0 ? w : t->w, h > 0 ? h : t->h};
+    // TEMP PROBE: 非法 rect 检测
+    if (dst.w <= 0 || dst.h <= 0 || dst.w > 16384 || dst.h > 16384 ||
+        dst.x < -16384 || dst.y < -16384 || dst.x > 16384 || dst.y > 16384)
+        Log(LogLevel::Error, "GFX bad rect DrawTexture x=%d y=%d w=%d h=%d tex=%p",
+            dst.x, dst.y, dst.w, dst.h, (void*)t->tex);
     SDL_SetTextureAlphaMod(t->tex, (uint8_t)(alpha * 255));
-    SDL_RenderCopy(renderer_, t->tex, nullptr, &dst);
+    if (SDL_RenderCopy(renderer_, t->tex, nullptr, &dst) != 0)
+        Log(LogLevel::Error, "GFX RenderCopy fail: %s", SDL_GetError());
 }
 
 void Gfx::DrawTextureFit(Tex* t, float cx, float cy, float sx, float sy, float alpha) {
@@ -245,15 +263,27 @@ void Gfx::DrawTextureFit(Tex* t, float cx, float cy, float sx, float sy, float a
     dst.h = (int)(t->h * sy);
     dst.x = (int)(cx - dst.w / 2.0f);
     dst.y = (int)(cy - dst.h / 2.0f);
+    // TEMP PROBE: 非法 rect 检测(含 NaN/Inf 转 int 溢出)
+    if (dst.w <= 0 || dst.h <= 0 || dst.w > 16384 || dst.h > 16384 ||
+        dst.x < -16384 || dst.y < -16384 || dst.x > 16384 || dst.y > 16384 ||
+        std::isnan(cx) || std::isnan(cy) || std::isnan(sx) || std::isnan(sy))
+        Log(LogLevel::Error, "GFX bad rect DrawTextureFit x=%d y=%d w=%d h=%d sx=%f sy=%f tex=%p",
+            dst.x, dst.y, dst.w, dst.h, sx, sy, (void*)t->tex);
     SDL_SetTextureAlphaMod(t->tex, (uint8_t)(alpha * 255));
-    SDL_RenderCopy(renderer_, t->tex, nullptr, &dst);
+    if (SDL_RenderCopy(renderer_, t->tex, nullptr, &dst) != 0)
+        Log(LogLevel::Error, "GFX RenderCopy(fit) fail: %s", SDL_GetError());
 }
 
 void Gfx::FillRect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
     SDL_Rect rc{x, y, w, h};
+    // TEMP PROBE: 非法 rect 检测
+    if (w <= 0 || h <= 0 || w > 16384 || h > 16384 ||
+        x < -16384 || y < -16384 || x > 16384 || y > 16384)
+        Log(LogLevel::Error, "GFX bad rect FillRect x=%d y=%d w=%d h=%d", x, y, w, h);
     SDL_SetRenderDrawColor(renderer_, r, g, b, a);
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-    SDL_RenderFillRect(renderer_, &rc);
+    if (SDL_RenderFillRect(renderer_, &rc) != 0)
+        Log(LogLevel::Error, "GFX RenderFillRect fail: %s", SDL_GetError());
 }
 
 // ---------------- 文本 ----------------
