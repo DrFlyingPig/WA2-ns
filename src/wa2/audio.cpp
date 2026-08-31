@@ -60,10 +60,11 @@ void Audio::FreeBgm() {
 bool Audio::PlayBgm(int id, bool loop, int vol, Res& res) {
     FreeBgm();
     Mix_VolumeMusic(vol * bgmVol_ / 255);
-    std::vector<std::string> cands;
-    std::string single = Res::BgmName(id, false);
-    cands.push_back(single);
-    cands.push_back(Res::BgmName(id, true));
+    // A(前奏/主段):.ogg 优先,demo 用 .wav 回退
+    std::string single = Res::BgmName(id, false);          // bgm_xxx.ogg
+    std::string singleWav = single;
+    if (singleWav.size() > 4) singleWav.replace(singleWav.size() - 4, 4, ".wav");
+    std::vector<std::string> cands = {single, singleWav};
     ResLoc a = res.Find(cands);
     if (!a.found) {
         Log(LogLevel::Warn, "audio: bgm %d missing", id);
@@ -76,15 +77,19 @@ bool Audio::PlayBgm(int id, bool loop, int vol, Res& res) {
         Log(LogLevel::Warn, "audio: bgm decode failed: %s", Mix_GetError());
         return false;
     }
-    if (a.name == single) {
-        Mix_PlayMusic(bgmA_, loop ? -1 : 0);
-    } else {
-        // A=前奏(一次性),B=循环
+    // B(循环段):存在则 A 播一次后接 B 循环;否则 A 自身作为整曲循环
+    std::string loopPart = Res::BgmName(id, true);         // bgm_xxx_b.ogg
+    std::vector<std::string> lc = {loopPart};
+    if (loopPart.size() > 4) { std::string w = loopPart; w.replace(w.size() - 4, 4, ".wav"); lc.push_back(w); }
+    ResLoc b = res.Find(lc);
+    if (b.found) {
         Mix_PlayMusic(bgmA_, 0);
-        std::vector<uint8_t> db = res.Load(Res::BgmName(id, true));
+        std::vector<uint8_t> db = res.Load(b.name);
         SDL_RWops* rwb = SDL_RWFromMem(db.data(), (int)db.size());
         bgmB_ = Mix_LoadMUS_RW(rwb, 1);
         if (!bgmB_) Log(LogLevel::Warn, "audio: bgm B decode failed: %s", Mix_GetError());
+    } else {
+        Mix_PlayMusic(bgmA_, loop ? -1 : 0);
     }
     return true;
 }

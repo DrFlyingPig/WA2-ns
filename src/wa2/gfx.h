@@ -5,6 +5,8 @@
 #include "res.h"
 #include "scene.h"
 
+#include <unordered_set>
+
 struct SDL_Renderer;
 struct SDL_Window;
 struct SDL_Texture;
@@ -61,6 +63,7 @@ private:
     SDL_Renderer* renderer_ = nullptr;
     _TTF_Font* font_ = nullptr;
     std::unordered_map<std::string, Tex> cache_;
+    std::unordered_set<std::string> missing_;   // 解码失败的资源:本会话不再每帧重试
     Tex snapshotTex_;
     SDL_Texture* snapshot_ = nullptr;
 };

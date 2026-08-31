@@ -128,17 +128,31 @@ void Gfx::Shutdown() {
 Tex* Gfx::Get(const std::string& lowerName, Res& res, const std::string& effectMode) {
     auto it = cache_.find(lowerName);
     if (it != cache_.end()) return &it->second;
+    if (missing_.count(lowerName)) return nullptr;   // 本会话已确认失败,不再每帧重试
 
     std::vector<uint8_t> data = res.Load(lowerName);
     if (data.empty()) {
+        missing_.insert(lowerName);
         Log(LogLevel::Warn, "gfx: missing %s", lowerName.c_str());
         return nullptr;
     }
     SDL_RWops* rw = SDL_RWFromMem(data.data(), (int)data.size());
     SDL_Surface* surf = IMG_Load_RW(rw, 1);
     if (!surf) {
-        Log(LogLevel::Warn, "gfx: decode %s failed: %s", lowerName.c_str(), IMG_GetError());
-        return nullptr;
+        // 自动识别失败(TGA 无魔数头)时,按扩展名强制调用对应解码器
+        size_t dot = lowerName.rfind('.');
+        if (dot != std::string::npos) {
+            std::string type = lowerName.substr(dot + 1);
+            for (size_t q = 0; q < type.size(); ++q)
+                if (type[q] >= 'a' && type[q] <= 'z') type[q] -= 32;
+            SDL_RWops* rw2 = SDL_RWFromMem(data.data(), (int)data.size());
+            surf = IMG_LoadTyped_RW(rw2, 1, type.c_str());
+        }
+        if (!surf) {
+            missing_.insert(lowerName);
+            Log(LogLevel::Warn, "gfx: decode %s failed: %s", lowerName.c_str(), IMG_GetError());
+            return nullptr;
+        }
     }
     // 调色板 LUT(仅 32 位 RGBA 路径)
     if (!effectMode.empty()) {
@@ -171,6 +185,7 @@ Tex* Gfx::LoadMask(const std::string& lowerName, Res& res) {
 void Gfx::ClearCache() {
     for (auto& [k, t] : cache_) if (t.tex) SDL_DestroyTexture(t.tex);
     cache_.clear();
+    missing_.clear();
 }
 
 void Gfx::Release(const std::string& lowerName) {
