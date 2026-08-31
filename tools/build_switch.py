@@ -29,6 +29,8 @@ CXXFLAGS = ['-std=gnu++17', '-O2', '-Wall', '-fno-rtti', '-fno-exceptions',
             '-D__SWITCH__', '-DSWITCH'] + ARCH
 if os.environ.get('WA2_MINIMAL'):
     CXXFLAGS = CXXFLAGS + ['-DWA2_MINIMAL']
+if os.environ.get('WA2_MIN2'):
+    CXXFLAGS = CXXFLAGS + ['-DWA2_MIN2']
 LIBS = ['-lSDL2_image', '-lSDL2_ttf', '-lSDL2_mixer', '-lSDL2',
         '-lvorbisidec', '-logg', '-lmodplug', '-lmpg123',
         '-lopusfile', '-lopus',

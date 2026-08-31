@@ -95,6 +95,46 @@ void Engine::Run() {
     }
     return;
 #endif
+#ifdef WA2_MIN2
+    // 最小复现单元2:保留"脚本VM + 快速点击推进文本"串行链,不渲染任何纹理/背景/立绘/音频。
+    // 用于二分定位:若此变体崩 => 根因在脚本/点击推进路径(与纹理无关)。
+    Log(LogLevel::Info, "MIN2: script+click-advance loop, no textures/audio");
+    LogFlush();
+    state_ = State::Game; ui_ = UiMode::None;
+    SLoadScript(startScript_, 0);
+    uint32_t t0 = SDL_GetTicks();
+    uint32_t lastClick = 0;
+    while (state_ != State::Quit) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) { if (ev.type == SDL_QUIT) state_ = State::Quit; }
+        uint32_t now = SDL_GetTicks();
+        float dt = (now - t0) / 1000.0f; t0 = now;
+        if (dt > 0.1f) dt = 0.1f;
+        // 模拟每秒 3-4 次快速点击推进文本
+        if (now - lastClick >= 260) {
+            lastClick = now;
+            clicked_ = true;
+        }
+        if (state_ == State::Game) {
+            scriptAcc_ += dt;
+            while (scriptAcc_ >= kScriptTick) { scriptAcc_ -= kScriptTick; TickScript(kScriptTick); }
+        }
+        TickInput();
+        // 轻量渲染:纯色+当前文本串(不加载任何纹理)
+        gfx_.Clear();
+        gfx_.FillRect(0, 0, kVirtualW, kVirtualH, 20, 18, 40, 255);
+        if (adv_.visible && !adv_.segments.empty())
+            gfx_.DrawText(adv_.segments[adv_.seg], 120, kVirtualH - 120, kTextSize, 255, 255, 255);
+        gfx_.Present();
+        SDL_Delay(16);
+        if ((SDL_GetTicks() - lastClick) > 0 && state_ == State::Title && ui_ == UiMode::Title) {
+            // 回标题后会回 Title;MIN2 重新进 game 以持续循环
+            state_ = State::Game; ui_ = UiMode::None;
+            SLoadScript(startScript_, 0);
+        }
+    }
+    return;
+#endif
     uint32_t last = SDL_GetTicks();
 #ifdef __SWITCH__
     while (state_ != State::Quit && appletMainLoop()) {
