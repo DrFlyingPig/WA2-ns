@@ -300,6 +300,7 @@ void Engine::SLoadScript(const std::string& name, int point) {
     scene_.ClearChars();
     scene_.selectItems.clear();
     for (auto& c : chars_) { c.show = false; c.alpha = 0.f; c.targetAlpha = 0.f; c.fadePerSec = 0.f; } // 复位渲染立绘槽(否则多轮后无空槽→立绘消失)
+    fb_.alpha = 0.f; fb_.targetAlpha = 0.f; fb_.fadePerSec = 0.f;   // 复位全屏色彩覆盖(否则 fade_out 残留黑幕影响下一轮)
     gfx_.ClearCache();   // 释放旧场景的图/立绘纹理,避免内存随推进累积
     auto s = std::make_unique<Script>();
     s->SetGameFlags(&gameFlags_);
@@ -342,6 +343,7 @@ void Engine::GoTitle() {
     for (auto& s : stack_) graveyard_.push_back(std::move(s));
     stack_.clear();
     for (auto& c : chars_) { c.show = false; c.alpha = 0.f; c.targetAlpha = 0.f; c.fadePerSec = 0.f; } // 复位立绘槽
+    fb_.alpha = 0.f; fb_.targetAlpha = 0.f; fb_.fadePerSec = 0.f;   // 复位全屏色彩覆盖(否则黑幕残留)
     gfx_.ClearCache();   // 回标题时释放当前场景纹理
 }
 
