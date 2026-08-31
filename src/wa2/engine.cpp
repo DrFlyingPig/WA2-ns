@@ -284,8 +284,8 @@ void Engine::TickScript(float dt) {
     TickResult r = s->Tick(*this);
     ApplyPending();
     if (r == TickResult::End) {
-        // 弹栈;底层脚本继续或回标题
-        stack_.pop_back();
+        // 弹栈;底层脚本继续或回标题(goTitle 可能已清空栈,需防空)
+        if (!stack_.empty()) stack_.pop_back();
         if (stack_.empty()) {
             state_ = State::Title;
             ui_ = UiMode::Title;
@@ -335,8 +335,10 @@ void Engine::GoTitle() {
     state_ = State::Title;
     ui_ = UiMode::Title;
     audio_.StopBgm(500);
+    // 延迟销毁:当前脚本还在执行其 Tick,直接 clear 会 use-after-free
+    // (gotitle 是当前脚本自己触发的宿主调用)
+    for (auto& s : stack_) graveyard_.push_back(std::move(s));
     stack_.clear();
-    graveyard_.clear();
     gfx_.ClearCache();   // 回标题时释放当前场景纹理
 }
 

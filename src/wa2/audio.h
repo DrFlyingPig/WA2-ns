@@ -3,9 +3,7 @@
 
 #include "wa2.h"
 #include "res.h"
-
-struct _Mix_Music;
-struct Mix_Chunk;
+#include <SDL2/SDL_mixer.h>   // 提供 Mix_Music/Mix_Chunk(SDL_mixer 各版本内部标签不同,须用头文件)
 
 namespace wa2 {
 
@@ -33,8 +31,9 @@ public:
     void StopAll();
 
 private:
-    _Mix_Music* bgmA_ = nullptr;   // 前奏段
-    _Mix_Music* bgmB_ = nullptr;   // 循环段
+    bool noAudio_ = false;   // 临时: WA2_NOAUDIO 关闭 SDL_mixer(避开 ASan+SDL_mixer 音频线程)
+    Mix_Music* bgmA_ = nullptr;   // 前奏段
+    Mix_Music* bgmB_ = nullptr;   // 循环段
     std::string bgmBPath_;
     int bgmVol_ = 200;
     struct Chan {

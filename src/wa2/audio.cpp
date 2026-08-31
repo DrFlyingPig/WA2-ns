@@ -4,6 +4,7 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_mixer.h>
+#include <cstdlib>
 
 namespace wa2 {
 
@@ -14,6 +15,8 @@ static void OnMusicFinished() {
 }
 
 bool Audio::Init() {
+    noAudio_ = std::getenv("WA2_NOAUDIO") != nullptr;   // 临时: ASan 避开 SDL_mixer 音频线程
+    if (noAudio_) return true;
     Mix_Init(MIX_INIT_OGG);   // 初始化需要的解码器(OGG);demo 用 WAV 亦无害
     if (Mix_OpenAudio(48000, MIX_DEFAULT_FORMAT, 2, 4096) != 0) {
         Log(LogLevel::Error, "audio: open failed: %s", Mix_GetError());
@@ -27,6 +30,7 @@ bool Audio::Init() {
 }
 
 void Audio::Shutdown() {
+    if (noAudio_) return;
     StopAll();
     Mix_HookMusicFinished(nullptr);
     g_audio = nullptr;
@@ -34,6 +38,7 @@ void Audio::Shutdown() {
 }
 
 void Audio::SetVolumes(int bgm, int se, int voice) {
+    if (noAudio_) return;
     bgmVol_ = bgm; seVol_ = se; voiceVol_ = voice;
     Mix_VolumeMusic(bgmVol_);
     for (int i = 0; i < 8; i++) Mix_Volume(i, seVol_);
@@ -41,9 +46,10 @@ void Audio::SetVolumes(int bgm, int se, int voice) {
 }
 
 void Audio::Update() {
+    if (noAudio_) return;
     // BGM A 段播完 → 无缝接 B 段循环
     if (bgmB_) {
-        _Mix_Music* b = bgmB_;
+        Mix_Music* b = bgmB_;
         bgmB_ = nullptr;      // 防止重入
         if (Mix_PlayMusic(b, -1) != 0) {
             Log(LogLevel::Warn, "audio: bgm loop failed: %s", Mix_GetError());
@@ -53,12 +59,14 @@ void Audio::Update() {
 }
 
 void Audio::FreeBgm() {
+    if (noAudio_) return;
     if (bgmA_) { Mix_FreeMusic(bgmA_); bgmA_ = nullptr; }
     if (bgmB_) { Mix_FreeMusic(bgmB_); bgmB_ = nullptr; }
     Mix_HaltMusic();
 }
 
 bool Audio::PlayBgm(int id, bool loop, int vol, Res& res) {
+    if (noAudio_) return false;
     FreeBgm();
     Mix_VolumeMusic(vol * bgmVol_ / 255);
     // A(前奏/主段):.ogg 优先,demo 用 .wav 回退
@@ -100,6 +108,7 @@ bool Audio::PlayBgm(int id, bool loop, int vol, Res& res) {
 }
 
 void Audio::StopBgm(int fadeMs) {
+    if (noAudio_) return;
     if (fadeMs > 0) Mix_FadeOutMusic(fadeMs);
     else Mix_HaltMusic();
     // 释放延后到下一次 PlayBgm(避免淡出中断)
@@ -107,6 +116,7 @@ void Audio::StopBgm(int fadeMs) {
 }
 
 float Audio::PlayVoice(int label, int id, int ch, bool loop, Res& res) {
+    if (noAudio_) return 0;
     Chan& c = *VoiceChan(ch);
     if (c.chunk) { Mix_HaltChannel(8 + (ch & 3)); Mix_FreeChunk(c.chunk); c.chunk = nullptr; }
     std::string name = Res::VoiceName(label, id, ch & 0xFF);
@@ -127,6 +137,7 @@ float Audio::PlayVoice(int label, int id, int ch, bool loop, Res& res) {
 }
 
 void Audio::StopVoice(int fadeMs, int ch) {
+    if (noAudio_) return;
     Chan& c = *VoiceChan(ch);
     if (fadeMs > 0) Mix_FadeOutChannel(8 + (ch & 3), fadeMs);
     else Mix_HaltChannel(8 + (ch & 3));
@@ -134,11 +145,13 @@ void Audio::StopVoice(int fadeMs, int ch) {
 }
 
 void Audio::SetVoiceVolume(int ch, int vol, int fadeMs) {
+    if (noAudio_) return;
     (void)fadeMs;
     Mix_Volume(8 + (ch & 3), vol * voiceVol_ / 255);
 }
 
 float Audio::VoiceRemaining(int ch) const {
+    if (noAudio_) return 0;
     const Chan& c = *const_cast<Audio*>(this)->VoiceChan(ch);
     if (!c.chunk || c.loop) return 0;
     int elapsed = (int)(SDL_GetTicks() - c.startMs);
@@ -146,6 +159,7 @@ float Audio::VoiceRemaining(int ch) const {
 }
 
 bool Audio::PlaySe(int ch, int id, bool loop, int fadeInMs, int vol, Res& res) {
+    if (noAudio_) return false;
     // 自动分配:找空闲通道
     if (ch < 0) {
         for (int i = 0; i < 8; i++) {
@@ -181,6 +195,7 @@ bool Audio::PlaySe(int ch, int id, bool loop, int fadeInMs, int vol, Res& res) {
 }
 
 void Audio::StopSe(int ch, int fadeMs) {
+    if (noAudio_) return;
     Chan& c = *SeChan(ch);
     if (fadeMs > 0) Mix_FadeOutChannel(ch & 7, fadeMs);
     else Mix_HaltChannel(ch & 7);
@@ -188,11 +203,13 @@ void Audio::StopSe(int ch, int fadeMs) {
 }
 
 void Audio::SetSeVolume(int ch, int vol, int fadeMs) {
+    if (noAudio_) return;
     (void)fadeMs;
     Mix_Volume(ch & 7, vol * seVol_ / 255);
 }
 
 float Audio::SeRemaining(int ch) const {
+    if (noAudio_) return 0;
     const Chan& c = *const_cast<Audio*>(this)->SeChan(ch);
     if (!c.chunk || c.loop) return 0;
     int elapsed = (int)(SDL_GetTicks() - c.startMs);
@@ -200,6 +217,7 @@ float Audio::SeRemaining(int ch) const {
 }
 
 void Audio::StopAll() {
+    if (noAudio_) return;
     FreeBgm();
     for (int i = 0; i < 8; i++) {
         if (se_[i].chunk) { Mix_HaltChannel(i); Mix_FreeChunk(se_[i].chunk); se_[i].chunk = nullptr; }

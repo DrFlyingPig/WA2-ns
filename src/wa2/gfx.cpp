@@ -8,6 +8,8 @@
 
 namespace wa2 {
 
+std::string g_fontPath;   // 外部字体路径(定义放最前,GetFont 需在此处可见)
+
 // ---------------- UTF-8 切分 ----------------
 static size_t Utf8Next(const std::string& s, size_t i) {
     if (i >= s.size()) return i;
@@ -51,15 +53,14 @@ struct Glyph {
     int w = 0, h = 0;
 };
 
-static std::map<int, _TTF_Font*> g_fonts;
+static std::map<int, TTF_Font*> g_fonts;
 static std::map<int, std::map<uint32_t, Glyph>> g_glyphs;
 
-static _TTF_Font* GetFont(int size) {
+static TTF_Font* GetFont(int size) {
     auto it = g_fonts.find(size);
     if (it != g_fonts.end()) return it->second;
     // 以 48px 打开,由 TTF_SetFontSize 缩放不可靠,直接按尺寸各开一份
-    extern std::string g_fontPath;
-    _TTF_Font* f = TTF_OpenFont(g_fontPath.c_str(), size);
+    TTF_Font* f = TTF_OpenFont(g_fontPath.c_str(), size);
     if (!f) {
         Log(LogLevel::Error, "font: open size %d failed: %s", size, TTF_GetError());
         return nullptr;
@@ -70,7 +71,6 @@ static _TTF_Font* GetFont(int size) {
 
 // ---------------- Gfx ----------------
 bool Gfx::Init(const std::string& fontPath) {
-    extern std::string g_fontPath;
     g_fontPath = fontPath;
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -257,14 +257,14 @@ void Gfx::FillRect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b, 
 }
 
 // ---------------- 文本 ----------------
-std::string g_fontPath;
+// g_fontPath 已在 namespace wa2 顶部定义
 
 static Glyph& GetGlyph(uint32_t cp, int size, SDL_Renderer* ren) {
     static Glyph empty;
     auto& m = g_glyphs[size];
     auto it = m.find(cp);
     if (it != m.end()) return it->second;
-    _TTF_Font* f = GetFont(size);
+    TTF_Font* f = GetFont(size);
     if (!f) return empty;
     // UTF-8 编码单字
     char buf[8];

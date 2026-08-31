@@ -10,7 +10,7 @@
 struct SDL_Renderer;
 struct SDL_Window;
 struct SDL_Texture;
-struct _TTF_Font;
+#include <SDL2/SDL_ttf.h>   // 提供公开类型 TTF_Font(跨 SDL2 版本)
 
 namespace wa2 {
 
@@ -61,7 +61,7 @@ public:
 private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
-    _TTF_Font* font_ = nullptr;
+    TTF_Font* font_ = nullptr;   // SDL_ttf 公开类型
     std::unordered_map<std::string, Tex> cache_;
     std::unordered_set<std::string> missing_;   // 解码失败的资源:本会话不再每帧重试
     Tex snapshotTex_;
