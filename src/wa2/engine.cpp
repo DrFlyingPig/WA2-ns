@@ -83,7 +83,7 @@ void Engine::Run() {
         TickInput();
         UpdateAnims(dt);
 
-        if (state_ == State::Logo && now / 1000.0f >= logoUntil_) state_ = State::Title;
+        if (state_ == State::Logo && now / 1000.0f >= logoUntil_) { state_ = State::Title; ui_ = UiMode::Title; }
 
         // 脚本节拍 30Hz
         if (state_ == State::Game) {
