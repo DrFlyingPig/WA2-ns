@@ -283,6 +283,16 @@ void Engine::TickScript(float dt) {
     clicked_ = false;
     TickResult r = s->Tick(*this);
     ApplyPending();
+    {   // TEMP PROBE: 仅在活跃脚本/栈深度变化时打印(诊断用)
+        static Script* lastAct = nullptr;
+        static size_t lastStk = SIZE_MAX;
+        Script* cur = Active();
+        if (cur != lastAct || stack_.size() != lastStk) {
+            Log(LogLevel::Info, "PROBE act=%p stack=%zu graveyard=%zu r=%s",
+                (void*)cur, stack_.size(), graveyard_.size(), r==TickResult::End?"End":"Wait");
+            lastAct = cur; lastStk = stack_.size();
+        }
+    }
     if (r == TickResult::End) {
         // 弹栈;底层脚本继续或回标题(goTitle 可能已清空栈,需防空)
         if (!stack_.empty()) stack_.pop_back();
@@ -295,6 +305,8 @@ void Engine::TickScript(float dt) {
 
 // ---------------- Host:流程 ----------------
 void Engine::SLoadScript(const std::string& name, int point) {
+    Log(LogLevel::Info, "PROBE SLoad enter stack=%zu graveyard=%zu flags=%zu",
+        stack_.size(), graveyard_.size(), gameFlags_.size());
     for (auto& s : stack_) graveyard_.push_back(std::move(s));
     stack_.clear();
     scene_.ClearChars();
@@ -334,6 +346,7 @@ void Engine::CallPoint(int point) {
 }
 
 void Engine::GoTitle() {
+    Log(LogLevel::Info, "PROBE GoTitle stack=%zu graveyard=%zu", stack_.size(), graveyard_.size());
     state_ = State::Title;
     ui_ = UiMode::Title;
     // 回标题彻底复位音频(BGM+SE+语音),避免多次运行间音频通道残留/腐蚀
