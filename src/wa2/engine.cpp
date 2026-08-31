@@ -104,7 +104,6 @@ void Engine::Run() {
 
         Render();
         gfx_.Present();
-        if (state_ == State::Game) Log(LogLevel::Info, "render: present");
 
         // 帧节奏:软件渲染器无可用的 VSYNC 时(退回 flags=0),全速空转会烧满 CPU 造成卡顿。
         // 统一把帧长补到 ~60fps,既有 VSYNC 时也安全(等待几乎为零)。
@@ -654,7 +653,6 @@ void Engine::SetBmpParam(int id, int mode, int alpha, int frames) {
 void Engine::Render() {
     gfx_.Clear();
     int ox = shakeX_, oy = shakeY_;
-    if (state_ == State::Game) Log(LogLevel::Info, "render: begin");
 
     if (state_ == State::Logo) {
         gfx_.FillRect(0, 0, kVirtualW, kVirtualH, 0, 0, 0, 255);
@@ -675,7 +673,6 @@ void Engine::Render() {
         SDL_SetTextureAlphaMod(trans_.snap, (uint8_t)(a * 255));
         SDL_RenderCopy(gfx_.renderer(), trans_.snap, nullptr, &dst);
     }
-    if (state_ == State::Game) Log(LogLevel::Info, "render: bg");
 
     // 立绘(按 kCharOrder 远→近)
     for (int oi = 0; oi < kMaxChars; oi++) {
@@ -688,7 +685,6 @@ void Engine::Render() {
         int y = kVirtualH - t->h;
         gfx_.DrawTexture(t, x + ox, y + oy, 0, 0, c.alpha);
     }
-    if (state_ == State::Game) Log(LogLevel::Info, "render: chars");
 
     // Bmp 自由图层
     for (auto& [id, b] : bmps_) {
@@ -707,9 +703,7 @@ void Engine::Render() {
         RenderSelect();
         RenderCalender();
     }
-    if (state_ == State::Game) Log(LogLevel::Info, "render: ui");
     RenderUi();
-    if (state_ == State::Game) Log(LogLevel::Info, "render: done");
     (void)oy;
 }
 

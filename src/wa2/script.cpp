@@ -396,7 +396,9 @@ TickResult Script::Tick(Host& host) {
     bool flag = true;
     while (flag && !exit_) {
         if (pos_ >= buf_.size()) { exit_ = true; break; }
+        int opPos = (int)pos_ - 4;   // 本指令其实偏移(已 +4)
         int cmd = (int)ReadU32();
+        Log(LogLevel::Info, "script op: pos=%d cmd=%d", opPos, cmd);
         switch (cmd) {
         case 0: flag = ParseJumpFlag(host); break;
         case 1: case 2: case 3:
