@@ -75,6 +75,7 @@ bool Engine::LoadGameData() {
 void Engine::Run() {
     uint32_t last = SDL_GetTicks();
     while (state_ != State::Quit) {
+        uint32_t frameStart = SDL_GetTicks();
         uint32_t now = SDL_GetTicks();
         float dt = (now - last) / 1000.0f;
         if (dt > 0.1f) dt = 0.1f;
@@ -96,6 +97,11 @@ void Engine::Run() {
 
         Render();
         gfx_.Present();
+
+        // 帧节奏:软件渲染器无可用的 VSYNC 时(退回 flags=0),全速空转会烧满 CPU 造成卡顿。
+        // 统一把帧长补到 ~60fps,既有 VSYNC 时也安全(等待几乎为零)。
+        uint32_t used = SDL_GetTicks() - frameStart;
+        if (used < 16) SDL_Delay(16 - used);
     }
 }
 
