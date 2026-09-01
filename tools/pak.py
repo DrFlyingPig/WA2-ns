@@ -162,6 +162,10 @@ def cmd_extract(path, outdir=None):
     outdir = outdir or os.path.splitext(path)[0] + "_out"
     os.makedirs(outdir, exist_ok=True)
     for name, off, size, comp in entries:
+        # Some retail archives contain directory-marker entries with size 0.
+        # They are not files and do not contain an LZSS header.
+        if size == 0:
+            continue
         data = buf[off:off + size]
         if comp:
             data = lzss_decompress(data)

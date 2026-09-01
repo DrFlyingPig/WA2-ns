@@ -6,6 +6,7 @@
 #include "res.h"
 #include "gfx.h"
 #include "audio.h"
+#include "video.h"
 #include "sav.h"
 
 namespace wa2 {
@@ -46,7 +47,10 @@ public:
     void UpdateChar(int frames) override;
     void RemoveChar(int pos) override;
     void BgMove(int dx, int dy, int frames) override;
+    void WaitBgMove() override;
+    void StopBgMove() override;
     void ColorFade(int r, int g, int b, int frames) override;
+    void ColorFadeFrom(int r, int g, int b, int frames) override;
     void SetFBColor(int r, int g, int b) override;
     void Shake(int type, int power, int frames) override;
     void ShowCalender(int y, int m, int d, int dow) override;
@@ -54,6 +58,11 @@ public:
     int  TimeMode() const override;
     void SetTimeMode(int v) override;
     void SetEffectMode(const std::string& file) override;
+    void SetWeather(int flag, int speedX, int speedY, int turbulence,
+                    int count, int flag2, int index) override;
+    void ChangeWeather(int speedX, int speedY, int count,
+                       int turbulence, int index) override;
+    void ResetWeather() override;
     void SetEroMode(bool v) override;
     bool ReplayMode() const override { return false; }
     bool CanSkip() const override;
@@ -97,9 +106,10 @@ private:
         bool selectVisible = false;
         bool calender = false;
         bool menu = false;          // 任意 UI 打开
+        bool movie = false;         // ASF/WMV 影片播放中
         bool Blocking() const {
             return textBusy || waitClick || timer || animBusy ||
-                   selectVisible || calender || menu;
+                   selectVisible || calender || menu || movie;
         }
         void Clear() { *this = Wait(); }
     } wait_;
@@ -128,6 +138,12 @@ private:
         float t = 0, dur = 0;      // 秒
         SDL_Texture* snap = nullptr;
     } trans_;
+    // S 背景平移默认与脚本并行；只有 WSZ 才等待它。
+    struct BgMoveAnim {
+        bool active = false;
+        float fromX = 0, fromY = 0, toX = 0, toY = 0;
+        float t = 0, dur = 0;
+    } bgMove_;
     struct CharDraw {
         bool show = false;
         int id = -1, no = 0, pos = 0;
@@ -136,7 +152,18 @@ private:
     } chars_[kMaxChars];
     struct BmpTex { std::string path; int z = 0; float alpha = 1, targetAlpha = 1; float fadePerSec = 0; };
     std::map<int, BmpTex> bmps_;
-    struct Fb { uint8_t r = 0, g = 0, b = 0; float alpha = 0, targetAlpha = 0, fadePerSec = 0; } fb_;
+    // wa2-godot 的 fb 是以 0.5 为中性的全局色调，不是一个不透明色块。
+    struct Fb {
+        float r = 0.5f, g = 0.5f, b = 0.5f;
+        float targetR = 0.5f, targetG = 0.5f, targetB = 0.5f;
+        float remaining = 0.0f;
+    } fb_;
+    struct Weather {
+        bool active = false;
+        int flag = 0, speedX = 0, speedY = 0, turbulence = 0;
+        int count = 0, flag2 = 0, index = 0;
+        uint32_t startedMs = 0;
+    } weather_;
     int shakeX_ = 0, shakeY_ = 0;
     float shakeUntil_ = 0;
 
@@ -144,6 +171,7 @@ private:
     Res res_;
     Gfx gfx_;
     Audio audio_;
+    VideoPlayer video_;
     Config config_;
     SceneState scene_;
     std::vector<std::unique_ptr<Script>> stack_;
@@ -163,7 +191,8 @@ private:
     float calUntil_ = 0;
 
     // ---- UI ----
-    enum class UiMode { None, Title, Menu, Save, Load, Config, Backlog };
+    enum class UiMode { None, Title, TitleStart, TitleSpecial, TitleNovel,
+                        Menu, Save, Load, Config, Backlog };
     UiMode ui_ = UiMode::None;
     int uiCursor_ = 0;
     int backlogScroll_ = 0;
@@ -172,6 +201,7 @@ private:
     bool skipMode_ = false;
     bool skipDisable_ = false;
     uint32_t title_ = 0;
+    bool titleBgmStarted_ = false;
 
     // ---- 路径/配置 ----
     std::string dataDir_, saveDir_;
@@ -181,6 +211,9 @@ private:
     int voiceLabel_ = 0;
     bool demoMode_ = false;
     bool clicked_ = false;
+    bool cancelClicked_ = false;
+    int navX_ = 0, navY_ = 0;       // 菜单/选项单次方向输入
+    bool movieSkippable_ = false;
     uint32_t timerStart_ = 0;
 
     // ---- 内部 ----
@@ -190,10 +223,13 @@ private:
     void TickInput();
     void TickScript(float dt);
     void Render();
+    void RenderWeather(bool frontLayer);
     void RenderAdvWindow();
     void RenderSelect();
     void RenderCalender();
     void RenderUi();
+    void RenderTitleBackdrop();
+    void StartChapter(const std::string& scriptName);
     void UpdateAnims(float dt);
     void ClickAdvance();          // 点击推进文本
     void SetupNewBg(const std::string& path, int frame, int x, int y, int offset, float sx, float sy, bool keepChar);
@@ -209,6 +245,7 @@ private:
 
     // 通用菜单输入:确认返回索引
     bool HandleMenuInputImpl(int count, bool allowCancel, int* outIdx, bool* canceled);
+    void CancelUi();
     void BacklogInput();
     void ConfigAdjustInput(int count);
 

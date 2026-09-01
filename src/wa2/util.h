@@ -13,6 +13,8 @@ float    ReadF32(const uint8_t* p);
 // ---------- 文件系统 ----------
 // 以二进制读入整个文件;失败返回空 vector。跨平台(sdmc:/romfs:/盘符路径均可,由 stdio 处理)
 std::vector<uint8_t> ReadFileAll(const std::string& path);
+// 只读取文件的一段，避免从数百 MB/GB 的资源包取单个条目时把整包载入内存。
+std::vector<uint8_t> ReadFileRange(const std::string& path, uint64_t offset, size_t size);
 bool WriteFileAll(const std::string& path, const void* data, size_t size);
 bool FileExists(const std::string& path);
 // 列出目录下匹配后缀的文件名(仅文件名,不含路径);后缀为空则返回全部

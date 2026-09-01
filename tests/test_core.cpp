@@ -151,6 +151,12 @@ static int TestSjis() {
     // ASCII 直通
     const uint8_t ascii[] = "abc123";
     CHECK(sjis::ToUtf8(ascii, 6) == "abc123", "sjis ascii passthrough");
+    // CK-GAL 的 8B C5 不是 Unicode 日文「暁」，重建码表后应成为中文“啊”。
+    const uint8_t patch[] = {'A', 0x8B, 0xC5};
+    std::string expected = "A\xE5\x95\x8A";
+    CHECK(sjis::ToPatchFontUtf8(patch, sizeof(patch)) == expected, "patch code preserved");
+    CHECK(sjis::PatchFontSlot(0x8BC5) == 1353, "patch font slot 8bc5");
+    CHECK(sjis::PatchFontSlot(0xEAA4) == 7135, "patch font slot eaa4");
     return 0;
 }
 

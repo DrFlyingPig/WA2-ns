@@ -29,8 +29,10 @@ public:
 
     // 扫描数据目录,登记所有归档(*.pac/*.pak/*.lad 等)并缓存散装文件列表
     void ScanArchives();
+    bool UsesPatchFont() const { return usePatchFont_; }
 
-    // 统一读资源:归档表 → 散装文件;返回原始字节
+    // 统一读资源:散装补丁文件 → 归档表;返回原始字节。
+    // PC 汉化补丁会把覆盖图放在 grp/ 等子目录，必须优先于 grp.pak。
     std::vector<uint8_t> Load(const std::string& lowerName);
     bool Exists(const std::string& lowerName);
 
@@ -41,6 +43,7 @@ public:
     static std::string CharName(int charId, int no);        // {prefix}{no:6}.tga
     static std::string MaskName(int id);                    // f0{id:3}.bmp
     static std::string BgmName(int id, bool loopPart);      // 主文件 / B 循环段
+    static std::string BgmIntroName(int id);                // A 前奏段
     static std::string SeName(int id);                      // wav 优先,回退 ogg
     static std::string VoiceName(int label, int id, int chr);
 
@@ -49,7 +52,8 @@ public:
 
 private:
     std::string dataDir_;
-    std::unordered_map<std::string, bool> looseFiles_; // 小写文件名 -> 存在
+    std::unordered_map<std::string, std::string> looseFiles_; // 小写文件名 -> 实际完整路径
+    bool usePatchFont_ = false;
     bool ScanArchiveFile(const std::string& path);
 };
 

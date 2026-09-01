@@ -3,23 +3,20 @@
 #include "util.h"
 #include "res.h"
 #include "funcs.h"
+#include "sjis.h"
 
 #include <cstring>
 #include <cstdio>
 
 namespace wa2 {
 
-// ---- Shift-JIS → UTF-8(表见 sjis_table.cpp,由 tools/gen_sjis.py 生成)----
-namespace sjis {
-// 返回写入 out 的字节数;无法识别时写 '?' 返回 1
-int OneToUtf8(const uint8_t* src, size_t avail, char* out);
-std::string ToUtf8(const uint8_t* data, size_t size);
-} // namespace sjis
-
 static const char kDefaultName[] = "\xe6\x98\xa5\xe5\xb8\x8c"; // 「春希」(STR_VAR 0 的默认取值)
 
-void ParseScriptTexts(const std::vector<uint8_t>& data, std::vector<std::string>& out) {
-    std::string all = sjis::ToUtf8(data.data(), data.size());
+void ParseScriptTexts(const std::vector<uint8_t>& data, std::vector<std::string>& out,
+                      bool patchFont) {
+    std::string all = patchFont
+        ? sjis::ToPatchFontUtf8(data.data(), data.size())
+        : sjis::ToUtf8(data.data(), data.size());
     out.clear();
     // 以逗号切分(文本本身不含换行;若出现 \n 保留)
     size_t start = 0;
@@ -62,7 +59,7 @@ bool Script::Load(Res& res, const std::string& name, int point) {
         Log(LogLevel::Warn, "script: %s point %d missing, start at 0", name_.c_str(), point);
 
     std::vector<uint8_t> txt = res.Load(name_ + ".txt");
-    if (!txt.empty()) ParseScriptTexts(txt, texts_);
+    if (!txt.empty()) ParseScriptTexts(txt, texts_, res.UsesPatchFont());
     else Log(LogLevel::Warn, "script: %s.txt missing", name_.c_str());
 
     Log(LogLevel::Info, "script: loaded %s (points=%zu texts=%zu start=%u)",

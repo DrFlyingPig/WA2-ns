@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -46,20 +47,13 @@ jobs:
       image: devkitpro/devkita64:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Generate demo data into romfs
-        run: |
-          apt-get update -qq && apt-get install -y -qq python3-pip >/dev/null
-          python3 -m pip install --quiet --break-system-packages pillow numpy || python3 -m pip install --quiet pillow numpy
-          python3 tools/gen_demo.py
-          # demo 剧本为日文、菜单/UI 为简体中文:嵌入 OFL 授权、中日文均覆盖的 Noto Sans SC(可再分发)
-          curl -sL --retry 3 -o out/Wa2Res/font.ttf \
-            "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf"
-          test -s out/Wa2Res/font.ttf
-          mkdir -p romfs
-          cp -r out/Wa2Res romfs/demo
       - name: Build wa2.nro
+        run: python3 tools/build_switch.py --devkitpro "$DEVKITPRO"
+      - name: Verify native framebuffer build
         run: |
-          make -f Makefile.switch -j$(nproc)
+          test "$(stat -c%s wa2.nro)" -lt 6000000
+          ! "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-strings" wa2.elf \
+            | grep -E 'nv50_ir|nouveau_switch|_mesa_glsl'
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

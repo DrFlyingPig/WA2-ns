@@ -185,7 +185,7 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
     case 0x96: host.Shake(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc)); return false;
     case 0x97: return false;
     case 0x98: // F(r,g,b,frame):遮罩色淡入(挂 overlay)
-        host.ColorFade(Arg(args, 2, sc), Arg(args, 3, sc), Arg(args, 4, sc), Arg(args, 1, sc));
+        host.ColorFadeFrom(Arg(args, 2, sc), Arg(args, 3, sc), Arg(args, 4, sc), Arg(args, 1, sc));
         return false;
     case 0x99: // FB(frame, r,g,b)
         host.ColorFade(Arg(args, 1, sc), Arg(args, 2, sc), Arg(args, 3, sc), Arg(args, 0, sc));
@@ -240,6 +240,15 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
     case 0xaa: host.SetTimeMode(Arg(args, 0, sc)); return true;
     case 0xab: return true;  // SetChromaMode
     case 0xac: host.SetEffectMode(ArgStr(args, 0, sc)); return true;
+    case 0xad: // SetWeather(flag, speedX, speedY, count, flag2, index)
+        host.SetWeather(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc), 0,
+                        Arg(args, 3, sc), Arg(args, 4, sc), Arg(args, 5, sc));
+        return true;
+    case 0xae: // ChangeWeather(speedX, speedY, count, turbulence, index);-1000=保持
+        host.ChangeWeather(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc),
+                           Arg(args, 3, sc), Arg(args, 4, sc));
+        return true;
+    case 0xaf: host.ResetWeather(); return true;
 
     // ---------------- Bmp 自由图层 ----------------
     case 0xb0: host.LoadBmp(Arg(args, 0, sc), ArgStr(args, 1, sc), Arg(args, 2, sc)); return true;
@@ -263,7 +272,9 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
     case 0xc2: host.WaitMs(Arg(args, 0, sc) * kMsPerFrame); return false;
     case 0xc3: host.StartTimer(); return true;
     case 0xc4: host.WaitMs((float)Arg(args, 0, sc)); return false;
-    case 0xc5: host.GoTitle(); return true;
+    // 上游 ParseCmd 的 while 条件会在 GoTitle 改变游戏状态后立刻停下。
+    // 本实现的 VM 不持有 UI 状态，因此这里显式让出，避免旧脚本继续执行。
+    case 0xc5: host.GoTitle(); args.clear(); return false;
     case 0xc6: host.PushInt(host.ReadSysFlag(Arg(args, 0, sc))); return true;
     case 0xc7: host.WriteSysFlag(Arg(args, 0, sc), Arg(args, 1, sc)); return true;
     case 0xc8: return false; // LogOut
@@ -283,7 +294,8 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
         return true;
     case 0xd1: // SetSelect(sel):显示选项,等待选择
         host.ShowSelect();
-        args.clear();
+        // 选择目标变量就是 args.back()。原版会一直保留它，等用户点击后
+        // 把选择号写回；这里若提前 clear，界面虽然能显示，任何选项都不会生效。
         return false;
 
     // ---------------- 背景移动等 ----------------
@@ -291,8 +303,8 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
         host.BgMove(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc));
         return true;
     case 0xd3: case 0xd4: return false; // Z / R
-    case 0xd5: return false;            // WSZ:等 S/Z/R 动画
-    case 0xd6: return false;            // StopSZR
+    case 0xd5: host.WaitBgMove(); return false; // WSZ:此时才等待此前非阻塞的 S
+    case 0xd6: host.StopBgMove(); return false; // StopSZR
     case 0xd7: case 0xd8: case 0xd9: case 0xda: return false; // VA/CS/CM/CRS
     case 0xdb: host.StopSkip(); return false;                 // SkipOFF
     case 0xdc: host.SetNovelMode(Arg(args, 0, sc) != 0); return false;
@@ -314,7 +326,15 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
                          (float)Arg(args, 7, sc), (float)Arg(args, 8, sc));
         return false;
     case 0xe4: return false; // H2
-    case 0xe5: case 0xe6: case 0xe7: return true;  // 天气占位
+    case 0xe5: // SetWeather2:第 7 个参数为 turbulence
+        host.SetWeather(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc), Arg(args, 6, sc),
+                        Arg(args, 3, sc), Arg(args, 4, sc), Arg(args, 5, sc));
+        return true;
+    case 0xe6:
+        host.ChangeWeather(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc),
+                           Arg(args, 3, sc), Arg(args, 4, sc));
+        return true;
+    case 0xe7: host.Shake(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc)); return false;
     case 0xe8: return false; // M2
     case 0xe9: host.NovelHide(Arg(args, 0, sc)); return false;
     case 0xea: host.NovelShow(Arg(args, 0, sc)); return false;

@@ -53,7 +53,11 @@ public:
     virtual void UpdateChar(int frames) = 0;
     virtual void RemoveChar(int pos) = 0;
     virtual void BgMove(int dx, int dy, int frames) {}
+    virtual void WaitBgMove() {}
+    virtual void StopBgMove() {}
     virtual void ColorFade(int r, int g, int b, int frames) = 0;
+    // F 与 FB 的动画方向不同：F 从指定色调回到中性，FB 从当前色调过渡到指定色调。
+    virtual void ColorFadeFrom(int r, int g, int b, int frames) { ColorFade(r, g, b, frames); }
     virtual void SetFBColor(int r, int g, int b) {}
     virtual void Shake(int type, int power, int frames) {}
     virtual void ShowCalender(int y, int m, int d, int dow) = 0;
@@ -61,6 +65,11 @@ public:
     virtual int  TimeMode() const { return 0; }
     virtual void SetTimeMode(int v) {}
     virtual void SetEffectMode(const std::string& file) {}
+    virtual void SetWeather(int flag, int speedX, int speedY, int turbulence,
+                            int count, int flag2, int index) {}
+    virtual void ChangeWeather(int speedX, int speedY, int count,
+                               int turbulence, int index) {}
+    virtual void ResetWeather() {}
     virtual bool EroMode() const { return false; }
     virtual void SetEroMode(bool v) {}
     virtual bool ReplayMode() const { return false; }

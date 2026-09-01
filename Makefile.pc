@@ -13,6 +13,14 @@ LDFLAGS  :=
 LIBS     := $(shell pkg-config --libs sdl2 SDL2_image SDL2_ttf SDL2_mixer 2>/dev/null || \
              echo -lSDL2_image -lSDL2_ttf -lSDL2_mixer -lSDL2)
 SDLFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null)
+FFMPEG_PKGS := libavformat libavcodec libavutil libswscale libswresample
+FFMPEGFLAGS := $(shell pkg-config --cflags $(FFMPEG_PKGS) 2>/dev/null)
+FFMPEGLIBS  := $(shell pkg-config --libs $(FFMPEG_PKGS) 2>/dev/null)
+ifneq ($(strip $(FFMPEGLIBS)),)
+CXXFLAGS += -DWA2_HAS_FFMPEG
+SDLFLAGS += $(FFMPEGFLAGS)
+LIBS     += $(FFMPEGLIBS)
+endif
 
 CORE_SRC := \
 	src/wa2/util.cpp src/wa2/archive.cpp src/wa2/res.cpp \
@@ -20,7 +28,7 @@ CORE_SRC := \
 	src/wa2/sjis.cpp src/wa2/sjis_table.cpp
 
 SDL_SRC  := \
-	src/wa2/gfx.cpp src/wa2/audio.cpp src/wa2/engine.cpp \
+	src/wa2/gfx.cpp src/wa2/audio.cpp src/wa2/video.cpp src/wa2/engine.cpp \
 	src/main.cpp
 
 HEAD     := tests/test_core.cpp

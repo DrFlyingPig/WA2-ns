@@ -17,6 +17,25 @@
 
 namespace wa2 {
 
+#ifdef _WIN32
+static std::wstring Utf8ToWide(const std::string& text) {
+    if (text.empty()) return {};
+    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                text.c_str(), -1, nullptr, 0);
+    if (n <= 0) return {};
+    std::wstring out((size_t)n, L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                            text.c_str(), -1, &out[0], n) <= 0)
+        return {};
+    return out;
+}
+
+static FILE* OpenUtf8File(const std::string& path, const wchar_t* mode) {
+    std::wstring wide = Utf8ToWide(path);
+    return wide.empty() ? nullptr : _wfopen(wide.c_str(), mode);
+}
+#endif
+
 uint16_t ReadU16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
 }
@@ -33,7 +52,11 @@ float ReadF32(const uint8_t* p) {
 
 std::vector<uint8_t> ReadFileAll(const std::string& path) {
     std::vector<uint8_t> out;
+#ifdef _WIN32
+    FILE* f = OpenUtf8File(path, L"rb");
+#else
     FILE* f = fopen(path.c_str(), "rb");
+#endif
     if (!f) return out;
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
@@ -47,8 +70,35 @@ std::vector<uint8_t> ReadFileAll(const std::string& path) {
     return out;
 }
 
+std::vector<uint8_t> ReadFileRange(const std::string& path, uint64_t offset, size_t size) {
+    std::vector<uint8_t> out;
+    if (size == 0) return out;
+#ifdef _WIN32
+    FILE* f = OpenUtf8File(path, L"rb");
+    if (!f || _fseeki64(f, (__int64)offset, SEEK_SET) != 0) {
+        if (f) fclose(f);
+        return out;
+    }
+#else
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f || fseek(f, (long)offset, SEEK_SET) != 0) {
+        if (f) fclose(f);
+        return out;
+    }
+#endif
+    out.resize(size);
+    size_t got = fread(out.data(), 1, size, f);
+    out.resize(got);
+    fclose(f);
+    return out;
+}
+
 bool WriteFileAll(const std::string& path, const void* data, size_t size) {
+#ifdef _WIN32
+    FILE* f = OpenUtf8File(path, L"wb");
+#else
     FILE* f = fopen(path.c_str(), "wb");
+#endif
     if (!f) return false;
     bool ok = fwrite(data, 1, size, f) == size;
     fclose(f);
@@ -57,7 +107,9 @@ bool WriteFileAll(const std::string& path, const void* data, size_t size) {
 
 bool FileExists(const std::string& path) {
 #ifdef _WIN32
-    DWORD attr = GetFileAttributesA(path.c_str());
+    std::wstring w = Utf8ToWide(path);
+    if (w.empty()) return false;
+    DWORD attr = GetFileAttributesW(w.c_str());
     return attr != INVALID_FILE_ATTRIBUTES;
 #else
     struct stat st;
@@ -68,17 +120,27 @@ bool FileExists(const std::string& path) {
 std::vector<std::string> ListDir(const std::string& dir, const std::string& suffix) {
     std::vector<std::string> out;
 #ifdef _WIN32
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA((dir + "\\*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) return out;
-    do {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        std::string name = fd.cFileName;
-        if (suffix.empty() || (name.size() >= suffix.size() &&
-            _stricmp(name.c_str() + name.size() - suffix.size(), suffix.c_str()) == 0))
-            out.push_back(name);
-    } while (FindNextFileA(h, &fd));
-    FindClose(h);
+    // UTF-8 → UTF-16(支持中文路径)
+    std::string pat = dir + "\\*";
+    std::wstring w = Utf8ToWide(pat);
+    if (!w.empty()) {
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW(w.c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                std::wstring nameW = fd.cFileName;
+                char buf[MAX_PATH * 4] = {0};
+                int m = WideCharToMultiByte(CP_UTF8, 0, nameW.c_str(), -1,
+                                            buf, (int)sizeof(buf), nullptr, nullptr);
+                std::string name = m > 0 ? std::string(buf, m > 0 ? m - 1 : 0) : std::string();
+                if (suffix.empty() || (name.size() >= suffix.size() &&
+                    _stricmp(name.c_str() + name.size() - suffix.size(), suffix.c_str()) == 0))
+                    out.push_back(name);
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+    }
 #else
     DIR* d = opendir(dir.c_str());
     if (!d) return out;
@@ -117,7 +179,13 @@ static FILE* g_logFile = nullptr;
 
 void LogSetFile(const std::string& path) {
     if (g_logFile) { fclose(g_logFile); g_logFile = nullptr; }
-    if (!path.empty()) g_logFile = fopen(path.c_str(), "wb");
+    if (!path.empty()) {
+#ifdef _WIN32
+        g_logFile = OpenUtf8File(path, L"wb");
+#else
+        g_logFile = fopen(path.c_str(), "wb");
+#endif
+    }
 }
 
 void Log(LogLevel lv, const char* fmt, ...) {

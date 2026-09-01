@@ -4,6 +4,7 @@
 #include "wa2.h"
 #include "res.h"
 #include <SDL2/SDL_mixer.h>   // 提供 Mix_Music/Mix_Chunk(SDL_mixer 各版本内部标签不同,须用头文件)
+#include <atomic>
 
 namespace wa2 {
 
@@ -11,7 +12,8 @@ class Audio {
 public:
     bool Init();
     void Shutdown();
-    void Update();   // BGM A→B 链接处理
+    void Update();   // 主线程每帧调用：BGM A→B 链接处理
+    void NotifyMusicFinished(); // 仅供 SDL_mixer 音频回调设置原子标志
 
     void SetVolumes(int bgm, int se, int voice);   // 0-255
 
@@ -34,7 +36,12 @@ private:
     bool noAudio_ = false;   // 临时: WA2_NOAUDIO 关闭 SDL_mixer(避开 ASan+SDL_mixer 音频线程)
     Mix_Music* bgmA_ = nullptr;   // 前奏段
     Mix_Music* bgmB_ = nullptr;   // 循环段
-    std::string bgmBPath_;
+    // Mix_Music 可能在播放期间继续读取 RWops，底层字节必须活到 Mix_FreeMusic。
+    std::vector<uint8_t> bgmAData_, bgmBData_;
+    bool bgmLoop_ = true;
+    bool bgmInLoopPart_ = false;
+    bool bgmStopping_ = false;
+    std::atomic<bool> musicFinished_{false};
     int bgmVol_ = 200;
     struct Chan {
         Mix_Chunk* chunk = nullptr;

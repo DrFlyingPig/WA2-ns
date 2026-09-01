@@ -15,8 +15,23 @@ build_switch/
 # 本地测试输出
 out/
 test_out/
+build_tmp/
+diagnostics/
 *.log
 __pycache__/
+
+# 本机依赖与真实数据工作目录
+third_party/
+wa2real/
+wa2real2/
+wa2-switch/
+1001.bnr/
+
+# 调试截图与帧导出
+/pc_*.png
+/real_*.png
+/mv000_5s.png
+/wa2_*_frame.bmp
 
 # 第三方参考源码(上游未附许可证,不得随仓库再分发)
 reference/

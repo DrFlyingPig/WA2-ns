@@ -67,18 +67,21 @@ std::vector<uint8_t> LzssDecompress(const uint8_t* data, size_t size) {
 
 // ---------------- Archive ----------------
 bool Archive::Open(const std::string& path) {
-    std::vector<uint8_t> buf = ReadFileAll(path);
-    if (buf.size() < 16) return false;
+    std::vector<uint8_t> head = ReadFileRange(path, 0, 16);
+    if (head.size() < 8) return false;
 
-    uint32_t magic = ReadU32(buf.data());
+    uint32_t magic = ReadU32(head.data());
     size_t base = 0, entrySize = 0, count = 0;
 
     if (magic == 0x5041434B || magic == 0x4B434150) {
         // PACK:两种字节序的 magic 都接受
-        count = ReadU32(buf.data() + 12);
+        if (head.size() < 16) return false;
+        count = ReadU32(head.data() + 12);
         base = 16;
         entrySize = 44;
-        if (base + count * entrySize > buf.size()) return false;
+        if (count > (SIZE_MAX - base) / entrySize) return false;
+        std::vector<uint8_t> buf = ReadFileRange(path, 0, base + count * entrySize);
+        if (buf.size() != base + count * entrySize) return false;
         for (size_t i = 0; i < count; i++) {
             const uint8_t* p = buf.data() + base + i * entrySize;
             ArchiveEntry e;
@@ -100,10 +103,12 @@ bool Archive::Open(const std::string& path) {
 
     if (magic == 0x0043414C) {
         // LAC:"LAC\0",名字逐字节取反
-        count = ReadU32(buf.data() + 4);
+        count = ReadU32(head.data() + 4);
         base = 8;
         entrySize = 40;
-        if (base + count * entrySize > buf.size()) return false;
+        if (count > (SIZE_MAX - base) / entrySize) return false;
+        std::vector<uint8_t> buf = ReadFileRange(path, 0, base + count * entrySize);
+        if (buf.size() != base + count * entrySize) return false;
         for (size_t i = 0; i < count; i++) {
             const uint8_t* p = buf.data() + base + i * entrySize;
             char name[33];
@@ -129,15 +134,14 @@ bool Archive::Open(const std::string& path) {
 }
 
 std::vector<uint8_t> Archive::Read(const ArchiveEntry& e) {
-    std::vector<uint8_t> raw = ReadFileAll(e.pkgPath);
-    if (raw.size() < e.offset + e.size) {
+    std::vector<uint8_t> raw = ReadFileRange(e.pkgPath, e.offset, e.size);
+    if (raw.size() != e.size) {
         Log(LogLevel::Error, "archive: entry %s out of range in %s", e.name.c_str(), e.pkgPath.c_str());
         return {};
     }
-    const uint8_t* p = raw.data() + e.offset;
     if (!e.compressed)
-        return std::vector<uint8_t>(p, p + e.size);
-    return LzssDecompress(p, e.size);
+        return raw;
+    return LzssDecompress(raw.data(), raw.size());
 }
 
 } // namespace wa2

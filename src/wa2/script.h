@@ -92,6 +92,7 @@ private:
 };
 
 // 把 .txt(Shift-JIS, 逗号分隔)解析为文本表;idx 0 固定为默认主角名
-void ParseScriptTexts(const std::vector<uint8_t>& data, std::vector<std::string>& out);
+void ParseScriptTexts(const std::vector<uint8_t>& data, std::vector<std::string>& out,
+                      bool patchFont = false);
 
 } // namespace wa2
