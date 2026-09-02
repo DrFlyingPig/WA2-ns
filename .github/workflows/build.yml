@@ -49,13 +49,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build minimal FFmpeg (asf/wmv3/wma, LGPL)
         run: |
+          # devkita64 容器默认不把 devkitA64/bin 放上 PATH,而 ffmpeg 的
+          # --cross-prefix 依赖裸命令名;先导出工具链环境。
+          export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
+          export DEVKITA64="$DEVKITPRO/devkitA64"
+          export PATH="$DEVKITA64/bin:$PATH"
           git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg-src
           test "$(git -C /tmp/ffmpeg-src rev-parse HEAD)" = "b08d7969c550a804a59511c7b83f2dd8cc0499b8"
           git -C /tmp/ffmpeg-src apply "$GITHUB_WORKSPACE/tools/patches/ffmpeg-horizon.patch"
           cd /tmp/ffmpeg-src
           ./configure \
             --prefix="$GITHUB_WORKSPACE/out/ffmpeg_min_prefix" \
-            --cross-prefix=aarch64-none-elf- \
+            --cross-prefix="$DEVKITA64/bin/aarch64-none-elf-" \
             --enable-cross-compile \
             --arch=aarch64 \
             --cpu=cortex-a57 \
