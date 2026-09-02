@@ -51,7 +51,7 @@ jobs:
         run: |
           git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg-src
           test "$(git -C /tmp/ffmpeg-src rev-parse HEAD)" = "b08d7969c550a804a59511c7b83f2dd8cc0499b8"
-          git -C /tmp/ffmpeg-src apply tools/patches/ffmpeg-horizon.patch
+          git -C /tmp/ffmpeg-src apply "$GITHUB_WORKSPACE/tools/patches/ffmpeg-horizon.patch"
           cd /tmp/ffmpeg-src
           ./configure \
             --prefix="$GITHUB_WORKSPACE/out/ffmpeg_min_prefix" \

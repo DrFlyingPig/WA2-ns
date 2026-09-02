@@ -110,7 +110,6 @@ private:
     // 由音频回调线程只写一次,主线程输出日志。不要在实时回调中做文件 I/O。
     std::atomic<size_t> callbackStackBytes_{0};
     bool callbackStackReported_ = false;
-    static void SDLCALL StreamSePostEffect(int channel, void* stream, int len, void* udata);
     bool TryPlayStreamSe(int ch, int id, bool loop, int fadeInMs, int vol,
                          const std::string& name, std::vector<uint8_t>&& data);
     void PumpStreamSeDecoders();
@@ -118,6 +117,8 @@ private:
     void RetireFinishedStreams();
     void StopStreamSe(int ch, int fadeMs);
 #endif
+    // 后混音回调:Switch 里混流式 SE,所有平台混电影 PCM。
+    static void SDLCALL StreamSePostEffect(int channel, void* stream, int len, void* udata);
 
     // 电影音轨后混音:src 由引擎线程换入换出,音频线程只读。
     std::atomic<MovieAudioSource*> movieSrc_{nullptr};

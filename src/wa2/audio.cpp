@@ -381,7 +381,6 @@ void Audio::Update() {
     }
 }
 
-#ifdef __SWITCH__
 void SDLCALL Audio::StreamSePostEffect(int channel, void* stream, int len, void* udata) {
     (void)channel;
     if (udata && stream && len > 0) {
@@ -599,7 +598,6 @@ void Audio::StopStreamSe(int ch, int fadeMs) {
     SDL_UnlockAudio();
     delete retired;
 }
-#endif
 
 void Audio::FreeBgm() {
     if (noAudio_) return;
