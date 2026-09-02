@@ -450,6 +450,8 @@ void Audio::MixMovieAudio(void* stream, int len) {
     }
 }
 
+// ---- Switch 专属:流式 SE 解码泵与后混音(声明在 audio.h 的 __SWITCH__ 区) ----
+#ifdef __SWITCH__
 bool Audio::TryPlayStreamSe(int ch, int id, bool loop, int fadeInMs, int vol,
                             const std::string& name, std::vector<uint8_t>&& data) {
     if (ch < 0 || ch >= kSeChannels || data.empty()) return false;
@@ -598,6 +600,7 @@ void Audio::StopStreamSe(int ch, int fadeMs) {
     SDL_UnlockAudio();
     delete retired;
 }
+#endif // __SWITCH__
 
 void Audio::FreeBgm() {
     if (noAudio_) return;

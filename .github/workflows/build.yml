@@ -62,7 +62,7 @@ jobs:
             --target-os=horizon \
             --enable-pic \
             --extra-cflags='-D__SWITCH__ -D_GNU_SOURCE -O2 -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIC -ftls-model=local-exec -ffunction-sections -fdata-sections' \
-            --extra-ldflags='-fPIE -L$DEVKITPRO/libnx/lib -Wl,--gc-sections' \
+            --extra-ldflags="-fPIE -L$DEVKITPRO/libnx/lib -Wl,--gc-sections" \
             --disable-runtime-cpudetect \
             --disable-programs \
             --disable-debug \
