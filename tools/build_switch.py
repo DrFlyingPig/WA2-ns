@@ -46,6 +46,13 @@ LIBS = ['-lSDL2_image', '-lSDL2_ttf', '-lSDL2_mixer', '-lSDL2',
         '-lfreetype', '-lharfbuzz', '-lbz2', '-lz',
         '-lnx', '-lm']
 
+# WA2 私有最小 FFmpeg(仅 LGPL 组件):asf 解复用 + wmv3/vc1/wma 解码 +
+# swscale/swresample。由 tools/build_ffmpeg_switch.sh 从锁定的 n7.1 提交
+# 交叉编译;官方 switch-ffmpeg 包带 GPL/NVDEC 全家桶,既超 MIT 分发约束
+# 又把 NRO 撑到 18MB+,故不用。
+FFMPEG_PREFIX = os.path.join(ROOT, 'out', 'ffmpeg_min_prefix')
+FFMPEG_LIBS = ['-lavformat', '-lavcodec', '-lswresample', '-lswscale', '-lavutil']
+
 
 def run(cmd, tool_env, **kw):
     print('>>', ' '.join(str(c) for c in cmd))
@@ -484,15 +491,27 @@ def main():
     # 生成头文件依赖；一旦头文件改变 Engine/Gfx 对象布局，未重编译的
     # main.o 会按旧 sizeof(Engine) 分配栈空间，真机必然内存破坏。
     # 当前项目只有十几个编译单元，全量构建的代价远小于错误 NRO 的风险。
+    ffmpeg_inc = os.path.join(FFMPEG_PREFIX, 'include')
+    ffmpeg_lib = os.path.join(FFMPEG_PREFIX, 'lib')
+    have_ffmpeg = all(os.path.exists(os.path.join(ffmpeg_lib, f'lib{lib[2:]}.a'))
+                      for lib in FFMPEG_LIBS)
+    if have_ffmpeg:
+        cxxflags.append('-DWA2_HAS_FFMPEG')
+        print('FFmpeg: 使用私有最小构建', FFMPEG_PREFIX)
+    else:
+        print('FFmpeg: 未找到', FFMPEG_PREFIX,
+              '(影片播放将编译为不可用;先运行 tools/build_ffmpeg_switch.sh)')
     objs = []
     for src in SRC:
         obj = os.path.join(BUILD, src.replace('/', '_').replace('\\', '_') + '.o')
-        run([gxx] + cxxflags +
-            ['-I' + os.path.join(ROOT, 'src'),
-             '-I' + os.path.join(portlibs, 'include'),
-             '-I' + os.path.join(portlibs, 'include', 'SDL2'),
-             '-I' + os.path.join(dkp, 'libnx', 'include'),
-             '-c', os.path.join(ROOT, src), '-o', obj], tool_env)
+        include_dirs = ['-I' + os.path.join(ROOT, 'src'),
+                        '-I' + os.path.join(portlibs, 'include'),
+                        '-I' + os.path.join(portlibs, 'include', 'SDL2'),
+                        '-I' + os.path.join(dkp, 'libnx', 'include')]
+        if have_ffmpeg:
+            include_dirs.append('-I' + ffmpeg_inc)
+        run([gxx] + cxxflags + include_dirs +
+            ['-c', os.path.join(ROOT, src), '-o', obj], tool_env)
         objs.append(obj)
 
     # 替换有忙等/越界风险的 audren 音频对象。这个私有库不会覆盖
@@ -504,9 +523,13 @@ def main():
     stub = make_egl_stub(stable_sdl, BUILD, gcc, nm, ar, tool_env)
     libpaths = ['-L' + os.path.join(portlibs, 'lib'),
                 '-L' + os.path.join(dkp, 'libnx', 'lib')]
+    if have_ffmpeg:
+        libpaths.insert(0, '-L' + ffmpeg_lib)
     elf = artifact_stem + '.elf'
     map_file = artifact_stem + '.map'
     link_libs = [stable_sdl if lib == '-lSDL2' else lib for lib in LIBS]
+    if have_ffmpeg:
+        link_libs = link_libs + FFMPEG_LIBS
     link = [gxx] + ARCH + [
         '-specs=' + specs,
         '-Wl,-Map,' + map_file,
@@ -531,6 +554,14 @@ def main():
                  f'缺少={missing_audio} 残留={leaked_audio}')
     if 'pthread_setcanceltype' in linked_symbols:
         sys.exit('Switch 线程校验失败：仍链接了 pthread_setcanceltype')
+    if have_ffmpeg:
+        # 影片链路必备:ASF 解复用 + WMV3/WMA2 解码 + 音频后混音入口。
+        required_video = ('ff_asf_demuxer', 'ff_wmv3_decoder', 'ff_wmav2_decoder',
+                          'avformat_open_input', 'sws_scale')
+        missing_video = [s for s in required_video if s not in linked_symbols]
+        if missing_video:
+            sys.exit('Switch 影片链接校验失败：缺少=' + ','.join(missing_video))
+        print('影片链接校验: asf/wmv3/wmav2 解码器已进入最终 ELF')
     all_symbols = subprocess.check_output(
         [nm, '-C', elf], env=tool_env, text=True, errors='replace')
     if 'EngineThreadMain(void*)' not in all_symbols:

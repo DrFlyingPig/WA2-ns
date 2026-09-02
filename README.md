@@ -28,7 +28,7 @@
 | 特别模式：电子小说 / CG / 场景回放 / BGM / 声优访谈 | ✅ |
 | 全局进度：已读文本 / CG / 场景与音乐解锁 | ✅，兼容导入原版 `SYSTEM.sav` |
 | PC 影片播放 | ✅ 检测到 FFmpeg 开发库时启用 |
-| Switch 影片播放 | ⛔ 尚未实现 |
+| Switch 影片播放 | ✅ 私有最小 FFmpeg(asf/wmv3/wma,仅 LGPL 组件)软解,专用解码线程 + 后混音流式音频 |
 
 ## 🎮 Switch 端使用
 
@@ -135,7 +135,7 @@ src/wa2/
   state.cpp   场景状态/存档/配置序列化    ┘
   gfx.*       PC SDL2 / Switch libnx 帧缓冲 ┐
   audio.*     SDL2_mixer 音频           │ 平台层
-  video.*     PC FFmpeg 影片播放         │
+  video.*     FFmpeg 影片播放(PC/Switch) │
   engine.*    宿主实现/UI/输入/主循环      ┘
 ```
 
@@ -146,7 +146,6 @@ PC/无头测试与 Switch 共享同一套 VM 语义。
 
 1. 掩码溶解过渡(素材已在格式文档中,差 CPU 混合实现)
 2. 用真实游戏数据做逐函数对拍(未知函数号补齐 `funcs.cpp`)
-3. Switch 影片解码与播放
 4. 多语言(中文补丁数据需要 CP932 自定义映射,参考 reference/)
 5. 触屏 UI 完整化(拖动/捏合、菜单手势)
 

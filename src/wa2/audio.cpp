@@ -246,13 +246,14 @@ bool Audio::Init() {
 #ifdef __SWITCH__
     callbackStackBytes_.store(0, std::memory_order_relaxed);
     callbackStackReported_ = false;
+#endif
+    // 后混音效果链同时服务 Switch 的流式 SE 和全平台的电影 PCM。
     if (!Mix_RegisterEffect(MIX_CHANNEL_POST, StreamSePostEffect, nullptr, this)) {
-        Log(LogLevel::Error, "audio: cannot register streaming SE mixer: %s", Mix_GetError());
+        Log(LogLevel::Error, "audio: cannot register post mix effect: %s", Mix_GetError());
         Shutdown();
         return false;
     }
     postEffectRegistered_ = true;
-#endif
     return true;
 }
 
@@ -267,12 +268,16 @@ void Audio::Shutdown() {
     // 先取消回调，再停止音乐；否则 Mix_HaltMusic 会再投递完成事件。
     Mix_HookMusicFinished(nullptr);
     g_audio.store(nullptr, std::memory_order_release);
-#ifdef __SWITCH__
     if (postEffectRegistered_) {
         Mix_UnregisterEffect(MIX_CHANNEL_POST, StreamSePostEffect);
         postEffectRegistered_ = false;
     }
-#endif
+    movieSrc_.store(nullptr, std::memory_order_release);
+    if (movieSilenceChunk_) {
+        Mix_HaltChannel(31);
+        Mix_FreeChunk(movieSilenceChunk_);
+        movieSilenceChunk_ = nullptr;
+    }
     if (deviceOpen_) {
         StopAll();
         Log(LogLevel::Info, "audio: closing SDL_mixer device");
@@ -381,12 +386,68 @@ void SDLCALL Audio::StreamSePostEffect(int channel, void* stream, int len, void*
     (void)channel;
     if (udata && stream && len > 0) {
         Audio* audio = static_cast<Audio*>(udata);
+#ifdef __SWITCH__
         if (audio->callbackStackBytes_.load(std::memory_order_relaxed) == 0) {
             if (Thread* self = threadGetSelf()) {
                 audio->callbackStackBytes_.store(self->stack_sz, std::memory_order_release);
             }
         }
         audio->MixStreamSe(stream, len);
+#endif
+        audio->MixMovieAudio(stream, len);
+    }
+}
+
+void Audio::SetMovieAudioSource(MovieAudioSource* src) {
+    if (noAudio_) return;
+    SDL_LockAudio();
+    movieSrc_.store(src, std::memory_order_release);
+    if (src) {
+        // 实时回调的块最大不超过 Mix_OpenAudio 的缓冲(4096 字节),
+        // 这里一次分配到该上限之上,回调内就永远不再进堆。
+        if (movieMixScratch_.size() < 8192) movieMixScratch_.resize(8192);
+        // MIX_CHANNEL_POST 效果链只在"有通道在响"时被 SDL_mixer 调用。
+        // 电影期间没有其它通道活动,用一段循环静音块占住 31 号通道,
+        // 保证后混音回调持续执行,电影 PCM 才能进入输出。
+        if (!movieSilenceChunk_) {
+            // Mix_OpenAudio 用 4096 帧缓冲;1 秒静音足够任何回调块大小。
+            movieSilence_.assign(48000 * 2 * sizeof(int16_t), 0);
+            movieSilenceChunk_ = Mix_QuickLoad_RAW(movieSilence_.data(),
+                                                   (Uint32)movieSilence_.size());
+            if (movieSilenceChunk_) {
+                Mix_VolumeChunk(movieSilenceChunk_, 0);
+                Mix_PlayChannel(31, movieSilenceChunk_, -1);
+            } else {
+                Log(LogLevel::Warn, "audio: movie silence chunk failed: %s",
+                    Mix_GetError());
+            }
+        }
+    } else if (movieSilenceChunk_) {
+        Mix_HaltChannel(31);
+        Mix_FreeChunk(movieSilenceChunk_);
+        movieSilenceChunk_ = nullptr;
+        movieSilence_.clear();
+        movieSilence_.shrink_to_fit();
+    }
+    SDL_UnlockAudio();
+}
+
+void Audio::MixMovieAudio(void* stream, int len) {
+    if (noAudio_ || len <= 0) return;
+    MovieAudioSource* src = movieSrc_.load(std::memory_order_acquire);
+    if (!src) return;
+    // 实时线程不做动态分配;scratch 在注册源时按设备缓冲上限预分配。
+    if (movieMixScratch_.size() < (size_t)len) return;
+    const size_t got = src->ReadMoviePcm(movieMixScratch_.data(), (size_t)len);
+    if (got == 0) return;
+    const int gain = src->MovieVolume255() * MIX_MAX_VOLUME / 255;
+    if (gain <= 0) return;
+    auto* dst = static_cast<int16_t*>(stream);
+    const int16_t* pcm = reinterpret_cast<const int16_t*>(movieMixScratch_.data());
+    const size_t samples = std::min(got, (size_t)len) / sizeof(int16_t);
+    for (size_t i = 0; i < samples; ++i) {
+        const int mixed = (int)dst[i] + (int)pcm[i] * gain / MIX_MAX_VOLUME;
+        dst[i] = (int16_t)std::clamp(mixed, -32768, 32767);
     }
 }
 

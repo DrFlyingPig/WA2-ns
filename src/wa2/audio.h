@@ -9,6 +9,18 @@
 
 namespace wa2 {
 
+// 电影音轨由 VideoPlayer 在引擎线程流式解码,输出 PCM 写入自己的环形缓冲;
+// Audio 的后混音回调(MIX_CHANNEL_POST)实时读取并混入最终输出。
+// 引擎线程是唯一生产者,SDL 音频线程是唯一消费者。
+class MovieAudioSource {
+public:
+    virtual ~MovieAudioSource() = default;
+    // 实时音频线程调用;返回实际读到的字节数(不足部分保持静音)。
+    virtual size_t ReadMoviePcm(void* dst, size_t bytes) = 0;
+    // 0-255,调用方(引擎)已按总音量归一。
+    virtual int MovieVolume255() const = 0;
+};
+
 class Audio {
 public:
     static constexpr int kSeChannels = 10;
@@ -57,15 +69,17 @@ public:
     int CurrentBgmVolume() const { return bgmScriptVol_; }
     std::vector<LoopSeState> LoopingSe() const;
 
+    // 电影音轨:注册/注销后混音 PCM 源。src 在下一次 SetMovieAudioSource
+    // (或 Audio 销毁)前必须保持存活;内部持有 SDL 音频锁,可在引擎线程调用。
+    void SetMovieAudioSource(MovieAudioSource* src);
     void StopAll();
 
 private:
     bool noAudio_ = false;   // 临时: WA2_NOAUDIO 关闭 SDL_mixer(避开 ASan+SDL_mixer 音频线程)
     bool mixerInitialized_ = false;
     bool deviceOpen_ = false;
-#ifdef __SWITCH__
+    // 后混音效果链在所有平台注册:Switch 混流式 SE,PC/Switch 混电影 PCM。
     bool postEffectRegistered_ = false;
-#endif
     Mix_Music* bgmA_ = nullptr;   // 前奏段
     Mix_Music* bgmB_ = nullptr;   // 循环段
     // Mix_Music 可能在播放期间继续读取 RWops，底层字节必须活到 Mix_FreeMusic。
@@ -93,7 +107,7 @@ private:
 
 #ifdef __SWITCH__
     StreamSe* streamSe_[kSeChannels] = {};
-    // 由音频回调线程只写一次，主线程输出日志。不要在实时回调中做文件 I/O。
+    // 由音频回调线程只写一次,主线程输出日志。不要在实时回调中做文件 I/O。
     std::atomic<size_t> callbackStackBytes_{0};
     bool callbackStackReported_ = false;
     static void SDLCALL StreamSePostEffect(int channel, void* stream, int len, void* udata);
@@ -104,6 +118,16 @@ private:
     void RetireFinishedStreams();
     void StopStreamSe(int ch, int fadeMs);
 #endif
+
+    // 电影音轨后混音:src 由引擎线程换入换出,音频线程只读。
+    std::atomic<MovieAudioSource*> movieSrc_{nullptr};
+    // 后混音回调专用暂存(注册源时按设备缓冲上限分配)。
+    std::vector<uint8_t> movieMixScratch_;
+    // 空样本循环块:保证电影播放期间混音回调始终有活动通道,
+    // 后混音效果链稳定执行(部分 SDL_mixer 版本在全静音时会跳过)。
+    std::vector<uint8_t> movieSilence_;
+    Mix_Chunk* movieSilenceChunk_ = nullptr;
+    void MixMovieAudio(void* stream, int len);
 
     void FreeBgm();
     Chan* SeChan(int ch) { return ch >= 0 && ch < kSeChannels ? &se_[ch] : nullptr; }

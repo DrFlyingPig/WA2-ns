@@ -244,6 +244,7 @@ bool Engine::Init(const std::string& dataDirOverride) {
     if (res_.UsesPatchFont() && !gfx_.EnablePatchFont(res_)) return false;
     if (!audio_.Init()) return false;
     if (!video_.Init(gfx_.renderer())) return false;
+    video_.BindAudio(&audio_);
     ApplyAudioConfig();
 
     // 原版标题场景自己负责 Logo/背景动画；启动阶段只保留极短黑屏。

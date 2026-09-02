@@ -47,11 +47,52 @@ jobs:
       image: devkitpro/devkita64:latest
     steps:
       - uses: actions/checkout@v4
+      - name: Build minimal FFmpeg (asf/wmv3/wma, LGPL)
+        run: |
+          git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg-src
+          test "$(git -C /tmp/ffmpeg-src rev-parse HEAD)" = "b08d7969c550a804a59511c7b83f2dd8cc0499b8"
+          git -C /tmp/ffmpeg-src apply tools/patches/ffmpeg-horizon.patch
+          cd /tmp/ffmpeg-src
+          ./configure \
+            --prefix="$GITHUB_WORKSPACE/out/ffmpeg_min_prefix" \
+            --cross-prefix=aarch64-none-elf- \
+            --enable-cross-compile \
+            --arch=aarch64 \
+            --cpu=cortex-a57 \
+            --target-os=horizon \
+            --enable-pic \
+            --extra-cflags='-D__SWITCH__ -D_GNU_SOURCE -O2 -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIC -ftls-model=local-exec -ffunction-sections -fdata-sections' \
+            --extra-ldflags='-fPIE -L$DEVKITPRO/libnx/lib -Wl,--gc-sections' \
+            --disable-runtime-cpudetect \
+            --disable-programs \
+            --disable-debug \
+            --disable-doc \
+            --disable-autodetect \
+            --disable-network \
+            --disable-everything \
+            --disable-gpl \
+            --disable-version3 \
+            --disable-nonfree \
+            --enable-avcodec \
+            --enable-avformat \
+            --enable-avutil \
+            --enable-swscale \
+            --enable-swresample \
+            --enable-demuxer=asf \
+            --enable-decoder=wmv3,vc1,wmav1,wmav2,wmapro,wmavoice \
+            --enable-parser=vc1 \
+            --enable-protocol=file \
+            --enable-pthreads \
+            --enable-asm \
+            --enable-neon \
+            --enable-small
+          make -j"$(nproc)"
+          make install
       - name: Build wa2.nro
         run: python3 tools/build_switch.py --devkitpro "$DEVKITPRO" --release
       - name: Verify native framebuffer build
         run: |
-          test "$(stat -c%s wa2.nro)" -lt 6000000
+          test "$(stat -c%s wa2.nro)" -lt 8000000
           ! "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-strings" wa2.elf \
             | grep -E 'nv50_ir|nouveau_switch|_mesa_glsl'
       - name: Upload artifact
