@@ -2,6 +2,7 @@
 #pragma once
 
 #include "wa2.h"
+#include <cstring>
 
 namespace wa2 {
 
@@ -40,9 +41,12 @@ public:
     void U8(uint8_t v)   { b_.push_back(v); }
     void U32(uint32_t v) { for (int i = 0; i < 4; i++) b_.push_back(uint8_t(v >> (i * 8))); }
     void I32(int32_t v)  { U32(uint32_t(v)); }
-    void F32(float v)    { U32(*reinterpret_cast<uint32_t*>(&v)); }
+    void F32(float v)    { uint32_t bits = 0; std::memcpy(&bits, &v, sizeof(bits)); U32(bits); }
     void Str(const std::string& s) { U32(uint32_t(s.size())); b_.insert(b_.end(), s.begin(), s.end()); }
-    void Bytes(const void* p, size_t n) { U32(uint32_t(n)); b_.insert(b_.end(), (const uint8_t*)p, (const uint8_t*)p + n); }
+    void Bytes(const void* p, size_t n) {
+        U32(uint32_t(n));
+        if (n) b_.insert(b_.end(), (const uint8_t*)p, (const uint8_t*)p + n);
+    }
     const std::vector<uint8_t>& data() const { return b_; }
 private:
     std::vector<uint8_t> b_;
@@ -54,6 +58,7 @@ public:
     explicit ByteReader(const std::vector<uint8_t>& v) : p_(v.data()), n_(v.size()) {}
     bool   Ok() const { return ok_; }
     size_t Pos() const { return pos_; }
+    size_t Remaining() const { return pos_ <= n_ ? n_ - pos_ : 0; }
     void   Seek(size_t pos) { pos_ = pos; ok_ = pos_ <= n_; }
     uint8_t  U8()  { if (!Need(1)) return 0; return p_[pos_++]; }
     uint32_t U32() { if (!Need(4)) return 0; uint32_t v = ReadU32(p_ + pos_); pos_ += 4; return v; }
@@ -62,7 +67,10 @@ public:
     std::string Str() { uint32_t n = U32(); if (!Need(n)) return {}; std::string s((const char*)p_ + pos_, n); pos_ += n; return s; }
     std::vector<uint8_t> Bytes() { uint32_t n = U32(); if (!Need(n)) return {}; std::vector<uint8_t> v(p_ + pos_, p_ + pos_ + n); pos_ += n; return v; }
 private:
-    bool Need(size_t k) { if (pos_ + k > n_) { ok_ = false; return false; } return true; }
+    bool Need(size_t k) {
+        if (pos_ > n_ || k > n_ - pos_) { ok_ = false; return false; }
+        return true;
+    }
     const uint8_t* p_; size_t n_; size_t pos_ = 0; bool ok_ = true;
 };
 

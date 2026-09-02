@@ -11,6 +11,22 @@
 
 namespace wa2 {
 
+// 玩家主动推进定时对白时，第一次确认只完成打字机；只有文字已经完整、
+// 正在等待下一次确认时，第二次确认才解除 0xC4 时间轴等待。
+inline bool ShouldReleaseC4ForAdvance(bool clicked, bool c4Timer,
+                                      bool textBusy, bool waitClick) {
+    return clicked && c4Timer && !textBusy && waitClick;
+}
+
+// 参考实现会在最后一段文字的 WAIT_CLICK 收到确认后，于同一次输入调用中
+// 继续解析脚本；仍有 \k 分段时则只切到下一段，不应越过该段的打字机。
+inline bool ShouldSynchronouslyContinueAfterConfirm(bool clicked,
+                                                     bool textBusy,
+                                                     bool waitClick,
+                                                     bool hasNextSegment) {
+    return clicked && !textBusy && waitClick && !hasNextSegment;
+}
+
 class Host {
 public:
     virtual ~Host() = default;
@@ -51,7 +67,7 @@ public:
                              int frame, int offset, int x, int y, float sx, float sy) = 0;
     virtual void AddChar(int id, int no, int pos) = 0;
     virtual void UpdateChar(int frames) = 0;
-    virtual void RemoveChar(int pos) = 0;
+    virtual void RemoveChar(int id) = 0;
     virtual void BgMove(int dx, int dy, int frames) {}
     virtual void WaitBgMove() {}
     virtual void StopBgMove() {}
@@ -72,7 +88,9 @@ public:
     virtual void ResetWeather() {}
     virtual bool EroMode() const { return false; }
     virtual void SetEroMode(bool v) {}
-    virtual bool ReplayMode() const { return false; }
+    // 0=正常剧情，1..24=特别模式中的场景编号。不能压缩成 bool，
+    // 原版 9999 调度脚本依赖完整编号选择不同回放。
+    virtual int ReplayMode() const { return 0; }
     virtual bool CanSkip() const { return false; }
     virtual bool Clicked() const { return false; }
 
@@ -85,7 +103,8 @@ public:
     virtual int  CurrentVoiceLabel() const { return 0; }
     virtual void PlayBgm(int id, bool loop, int vol) = 0;
     virtual void StopBgm(int fadeFrames) = 0;
-    virtual void PlayVoice(int label, int id, int ch, bool loop, int track) = 0;
+    virtual void PlayVoice(int label, int id, int chr, int volume,
+                           bool loop, int channel) = 0;
     virtual void WaitVoice(int ch) = 0;
     virtual void StopVoice(int fadeFrames, int ch) = 0;
     virtual void SetVoiceVolume(int ch, int vol, int frames) {}
@@ -98,6 +117,11 @@ public:
     virtual void WaitMs(float ms) = 0;
     virtual void StartTimer() = 0;
     virtual int  ElapsedTimerMs() = 0;
+    // 0xC4 的参数是从最近一次 0xC3 起算的绝对时间点，不是新的相对延时。
+    virtual void WaitUntilTimerMs(float targetMs) {
+        const float remainingMs = targetMs - (float)ElapsedTimerMs();
+        if (remainingMs > 0.0f) WaitMs(remainingMs);
+    }
 
     // --- Bmp 自由图层(特效/控件用) ---
     virtual void LoadBmp(int id, const std::string& path, int z) {}

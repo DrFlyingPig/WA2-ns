@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build wa2.nro
-        run: python3 tools/build_switch.py --devkitpro "$DEVKITPRO"
+        run: python3 tools/build_switch.py --devkitpro "$DEVKITPRO" --release
       - name: Verify native framebuffer build
         run: |
           test "$(stat -c%s wa2.nro)" -lt 6000000

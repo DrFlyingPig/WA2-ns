@@ -49,21 +49,41 @@ public:
         for (auto& c : chars) if (c.show && c.pos == pos) return &c;
         return nullptr;
     }
+    const CharItem* FindChar(int pos) const {
+        for (const auto& c : chars) if (c.show && c.pos == pos) return &c;
+        return nullptr;
+    }
+    const CharItem* FindCharById(int id) const {
+        for (const auto& c : chars) if (c.show && c.id == id) return &c;
+        return nullptr;
+    }
     void AddOrUpdateChar(int id, int no, int pos) {
-        CharItem* c = FindChar(pos);
-        if (!c) {
-            for (auto& slot : chars) {
-                if (!slot.show) { c = &slot; break; }
+        if (pos < 0 || pos >= kMaxChars) return;
+        // 参考实现的期望列表同时以角色 id 和位置保持唯一。先移除冲突项，
+        // CW 可安全地为随后的 C/CR/BC 批量排队多个变化。
+        for (auto& slot : chars) {
+            if (slot.show && (slot.id == id || slot.pos == pos)) {
+                slot = {};
             }
-            if (!c) { c = &chars[0]; }   // 槽满:复用首槽(不应发生)
         }
+        CharItem* c = nullptr;
+        for (auto& slot : chars) {
+            if (!slot.show) { c = &slot; break; }
+        }
+        if (!c) return;   // 唯一性成立时最多只有 kMaxChars 个有效位置
         c->id = id; c->no = no; c->pos = pos; c->show = true;
     }
+    void RemoveCharById(int id) {
+        // CR/CRW 的第一个参数是角色 id，不是画面位置。
+        for (auto& c : chars) {
+            if (c.show && c.id == id) { c = {}; return; }
+        }
+    }
     void RemoveCharAt(int pos) {
-        for (auto& c : chars) if (c.show && c.pos == pos) { c.show = false; c.id = -1; }
+        for (auto& c : chars) if (c.show && c.pos == pos) { c = {}; return; }
     }
     void ClearChars() {
-        for (auto& c : chars) { c.show = false; c.id = -1; }
+        for (auto& c : chars) c = {};
     }
     void AddBacklog(const std::string& name, const std::string& text) {
         backlog.push_back({name, text});

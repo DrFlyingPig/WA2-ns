@@ -1,5 +1,6 @@
 // gfx.cpp — SDL2 渲染器实现(纹理缓存 / 过渡 / 字形缓存文本)
 #include "gfx.h"
+#include "framebuffer_swizzle.h"
 #include "util.h"
 #include "sjis.h"
 
@@ -7,6 +8,7 @@
 #include <SDL2/SDL_image.h>
 #include <SDL2/SDL_ttf.h>
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -18,6 +20,120 @@
 #endif
 
 namespace wa2 {
+
+#if defined(__SWITCH__) && defined(WA2_DIAG_PARALLEL_FRAMEBUFFER)
+namespace {
+
+constexpr uint32_t kFramebufferWorkerCount = 3;
+constexpr size_t kFramebufferWorkerStack = 128u * 1024u;
+
+struct FramebufferSwizzlePool;
+struct FramebufferWorkerContext {
+    FramebufferSwizzlePool* pool = nullptr;
+    uint32_t index = 0;
+};
+
+struct FramebufferSwizzlePool {
+    Thread threads[kFramebufferWorkerCount]{};
+    Semaphore starts[kFramebufferWorkerCount]{};
+    Semaphore done{};
+    FramebufferWorkerContext contexts[kFramebufferWorkerCount]{};
+    std::atomic<bool> stop{false};
+    uint32_t started = 0;
+    void* dst = nullptr;
+    const void* src = nullptr;
+    uint32_t dstStride = 0;
+    uint32_t srcStride = 0;
+    uint32_t height = 0;
+    uint32_t tasks = 0;
+};
+
+FramebufferSwizzlePool g_framebufferSwizzlePool;
+
+static void RunFramebufferPartition(FramebufferSwizzlePool* pool,
+                                    uint32_t partition) {
+    const uint32_t partitions = pool->started + 1u;
+    const uint32_t begin = pool->tasks * partition / partitions;
+    const uint32_t end = pool->tasks * (partition + 1u) / partitions;
+    SwizzleRgbaToBlockLinearRange(pool->dst, pool->src,
+                                 pool->dstStride, pool->srcStride, pool->height,
+                                 begin, end);
+}
+
+static void FramebufferSwizzleWorker(void* opaque) {
+    auto* context = static_cast<FramebufferWorkerContext*>(opaque);
+    FramebufferSwizzlePool* pool = context->pool;
+    for (;;) {
+        semaphoreWait(&pool->starts[context->index]);
+        if (pool->stop.load(std::memory_order_acquire)) break;
+        RunFramebufferPartition(pool, context->index);
+        semaphoreSignal(&pool->done);
+    }
+}
+
+static void StopFramebufferSwizzlePool() {
+    FramebufferSwizzlePool& pool = g_framebufferSwizzlePool;
+    if (!pool.started) return;
+    pool.stop.store(true, std::memory_order_release);
+    for (uint32_t i = 0; i < pool.started; ++i)
+        semaphoreSignal(&pool.starts[i]);
+    for (uint32_t i = 0; i < pool.started; ++i) {
+        threadWaitForExit(&pool.threads[i]);
+        threadClose(&pool.threads[i]);
+    }
+    pool.started = 0;
+}
+
+static bool StartFramebufferSwizzlePool() {
+    FramebufferSwizzlePool& pool = g_framebufferSwizzlePool;
+    pool.stop.store(false, std::memory_order_release);
+    semaphoreInit(&pool.done, 0);
+    for (uint32_t i = 0; i < kFramebufferWorkerCount; ++i) {
+        semaphoreInit(&pool.starts[i], 0);
+        pool.contexts[i].pool = &pool;
+        pool.contexts[i].index = i;
+        // P2B 只引入 worker 生命周期，先让系统调度全部线程；固定核心会留到
+        // 后续独立变量，避免再次把线程创建和亲和性混在同一版中。
+        Result rc = threadCreate(&pool.threads[i], FramebufferSwizzleWorker,
+                                 &pool.contexts[i], nullptr,
+                                 kFramebufferWorkerStack, 0x2d, -2);
+        const bool created = R_SUCCEEDED(rc);
+        if (created) rc = threadStart(&pool.threads[i]);
+        if (R_FAILED(rc)) {
+            Log(LogLevel::Warn,
+                "gfx: framebuffer worker %u unavailable: 0x%08x; using single core",
+                i, (unsigned)rc);
+            // threadCreate 自己清理创建失败的内存；只有 create 成功而 start
+            // 失败时，这里才拥有一个需要 close 的有效 Thread。
+            if (created) threadClose(&pool.threads[i]);
+            StopFramebufferSwizzlePool();
+            return false;
+        }
+        ++pool.started;
+    }
+    return true;
+}
+
+static void ConvertFramebufferParallel(void* dst, const void* src,
+                                       uint32_t dstStride, uint32_t srcStride,
+                                       uint32_t height) {
+    FramebufferSwizzlePool& pool = g_framebufferSwizzlePool;
+    pool.dst = dst;
+    pool.src = src;
+    pool.dstStride = dstStride;
+    pool.srcStride = srcStride;
+    pool.height = height;
+    pool.tasks = BlockLinearTaskCount(dstStride, height);
+
+    for (uint32_t i = 0; i < pool.started; ++i)
+        semaphoreSignal(&pool.starts[i]);
+    RunFramebufferPartition(&pool, pool.started);
+    for (uint32_t i = 0; i < pool.started; ++i)
+        semaphoreWait(&pool.done);
+}
+
+} // namespace
+#endif
 
 static void LogHeapStats(const char* stage) {
 #ifdef __SWITCH__
@@ -105,7 +221,11 @@ bool Gfx::Init(const std::string& fontPath) {
 #ifdef __SWITCH__
     // HBMenu 小程序模式的可用内存远小于 title takeover。纹理只保留当前
     // 场景的工作集，给 TGA 解码、软件 framebuffer 和音频留下明确余量。
+#ifdef WA2_DIAG_CACHE_20MB
+    cacheBudgetBytes_ = 20u * 1024u * 1024u;
+#else
     cacheBudgetBytes_ = 8u * 1024u * 1024u;
+#endif
 #else
     cacheBudgetBytes_ = 256u * 1024u * 1024u;
 #endif
@@ -132,9 +252,8 @@ bool Gfx::Init(const std::string& fontPath) {
         return false;
     }
 #ifdef __SWITCH__
-    // Atmosphère 的重复报告都落在 Mesa/Nouveau shader compiler。这里用
-    // SDL software renderer 合成到普通 RGBA Surface，再由 libnx 官方
-    // Framebuffer API 双缓冲送屏，运行时不再加载任何 OpenGL shader。
+    // 当前稳定线使用 SDL software renderer 合成到普通 RGBA Surface，再由
+    // libnx Framebuffer API 双缓冲送屏，运行时不加载 OpenGL shader。
     softwareFrame_ = SDL_CreateRGBSurfaceWithFormat(
         0, kVirtualW, kVirtualH, 32, SDL_PIXELFORMAT_RGBA32);
     if (!softwareFrame_) {
@@ -154,7 +273,9 @@ bool Gfx::Init(const std::string& fontPath) {
     Result fbRc = framebufferCreate(nativeFramebuffer_, nwindowGetDefault(),
                                     kVirtualW, kVirtualH,
                                     PIXEL_FORMAT_RGBA_8888, 2);
+#ifndef WA2_DIAG_DIRECT_BLOCKLINEAR
     if (R_SUCCEEDED(fbRc)) fbRc = framebufferMakeLinear(nativeFramebuffer_);
+#endif
     if (R_FAILED(fbRc)) {
         Log(LogLevel::Error, "Create libnx framebuffer failed: 0x%08x", (unsigned)fbRc);
         if (nativeFramebuffer_->has_init) framebufferClose(nativeFramebuffer_);
@@ -162,6 +283,20 @@ bool Gfx::Init(const std::string& fontPath) {
         nativeFramebuffer_ = nullptr;
         return false;
     }
+#ifdef WA2_DIAG_DIRECT_BLOCKLINEAR
+#ifdef WA2_DIAG_PARALLEL_FRAMEBUFFER
+    const bool parallelFramebuffer = StartFramebufferSwizzlePool();
+    Log(LogLevel::Info,
+        "gfx: framebuffer swizzle=project-blocklinear workers=%u main=1",
+        parallelFramebuffer ? kFramebufferWorkerCount : 0u);
+#else
+    // P2A 只替换 framebuffer 的内存布局转换；不创建 worker，也不改变
+    // Engine 线程亲和性。这样真机结果可以单独判定直写 block-linear
+    // 是否安全，而不会再把线程生命周期和绑核混入同一个变量。
+    Log(LogLevel::Info,
+        "gfx: framebuffer swizzle=project-blocklinear workers=0 main=1");
+#endif
+#endif
     Log(LogLevel::Info,
         "gfx: backend=software display=libnx-framebuffer buffers=2 video=none");
 #else
@@ -387,6 +522,9 @@ bool Gfx::EnablePatchFont(Res& res) {
 }
 
 void Gfx::Shutdown() {
+#if defined(__SWITCH__) && defined(WA2_DIAG_PARALLEL_FRAMEBUFFER)
+    StopFramebufferSwizzlePool();
+#endif
     ClearCache();
     for (auto& [size, f] : g_fonts) TTF_CloseFont(f);
     g_fonts.clear();
@@ -609,12 +747,23 @@ void Gfx::Present() {
         return;
     }
     const uint8_t* src = (const uint8_t*)softwareFrame_->pixels;
+#ifdef WA2_DIAG_DIRECT_BLOCKLINEAR
+#ifdef WA2_DIAG_PARALLEL_FRAMEBUFFER
+    ConvertFramebufferParallel(dst, src, stride,
+                               (uint32_t)softwareFrame_->pitch, kVirtualH);
+#else
+    SwizzleRgbaToBlockLinearRange(
+        dst, src, stride, (uint32_t)softwareFrame_->pitch, kVirtualH,
+        0, BlockLinearTaskCount(stride, kVirtualH));
+#endif
+#else
     const size_t rowBytes = (size_t)kVirtualW * 4u;
     for (int y = 0; y < kVirtualH; ++y) {
         std::memcpy(dst + (size_t)y * stride,
                     src + (size_t)y * (size_t)softwareFrame_->pitch,
                     rowBytes);
     }
+#endif
     framebufferEnd(nativeFramebuffer_);
 #else
     SDL_RenderPresent(renderer_);

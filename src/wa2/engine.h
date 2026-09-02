@@ -8,11 +8,17 @@
 #include "audio.h"
 #include "video.h"
 #include "sav.h"
+#include "character_state.h"
+#include "special_mode.h"
+#ifdef WA2_DIAG_TEXT_FIT
+#include "text_layout.h"
+#endif
 
 namespace wa2 {
 
 class Engine : public Host {
 public:
+    ~Engine();
     bool Init(const std::string& dataDirOverride);
     void Run();
     void Shutdown();
@@ -45,7 +51,7 @@ public:
                      int offset, int x, int y, float sx, float sy) override;
     void AddChar(int id, int no, int pos) override;
     void UpdateChar(int frames) override;
-    void RemoveChar(int pos) override;
+    void RemoveChar(int id) override;
     void BgMove(int dx, int dy, int frames) override;
     void WaitBgMove() override;
     void StopBgMove() override;
@@ -64,7 +70,7 @@ public:
                        int turbulence, int index) override;
     void ResetWeather() override;
     void SetEroMode(bool v) override;
-    bool ReplayMode() const override { return false; }
+    int ReplayMode() const override { return replayMode_; }
     bool CanSkip() const override;
     bool Clicked() const override;
 
@@ -75,7 +81,8 @@ public:
     void StopBgm(int fadeFrames) override;
     void SetVoiceLabel(int label) override;
     int  CurrentVoiceLabel() const override;
-    void PlayVoice(int label, int id, int ch, bool loop, int track) override;
+    void PlayVoice(int label, int id, int chr, int volume,
+                   bool loop, int channel) override;
     void WaitVoice(int ch) override;
     void StopVoice(int fadeMs, int ch) override;
     void SetVoiceVolume(int ch, int vol, int frames) override;
@@ -87,12 +94,16 @@ public:
     void WaitMs(float ms) override;
     void StartTimer() override;
     int  ElapsedTimerMs() override;
+    void WaitUntilTimerMs(float targetMs) override;
 
     void LoadBmp(int id, const std::string& path, int z) override;
     void ReleaseBmp(int id) override;
     void SetBmpParam(int id, int mode, int alpha, int frames) override;
 
 private:
+    bool initialized_ = false;
+    bool shutdown_ = false;
+    bool suppressPersistence_ = false; // PC screenshot regression must be read/write isolated
     enum class State { Logo, Title, Game, Quit };
 
     // ---- 等待门(CheckScript 语义)----
@@ -100,6 +111,7 @@ private:
         bool textBusy = false;      // 打字机未完成
         bool waitClick = false;     // 等点击
         bool timer = false;         // WaitMs/WaitVoice/WaitSe
+        bool c4Timer = false;       // 仅 0xC4 时间轴等待，可由完成对白后的确认解除
         float timerUntil = 0;
         bool animBusy = false;      // 过渡/立绘/FB 动画进行中
         float animUntil = 0;
@@ -123,6 +135,12 @@ private:
         int seg = 0;                // 当前段
         int shown = 0;              // 当前段已显示字符数
         uint32_t lastCharMs = 0;
+#ifdef WA2_DIAG_TEXT_FIT
+        // 只在段落切换时重排，避免逐字显示期间换行跳动，也避免每帧重复扫描。
+        std::string layoutText;
+        DialogueTextLayout layout;
+        bool layoutNovelMode = false;
+#endif
         bool WaitForClick() const { return shown >= (int)segments[seg].size(); }
     } adv_;
 
@@ -144,12 +162,8 @@ private:
         float fromX = 0, fromY = 0, toX = 0, toY = 0;
         float t = 0, dur = 0;
     } bgMove_;
-    struct CharDraw {
-        bool show = false;
-        int id = -1, no = 0, pos = 0;
-        float alpha = 1, targetAlpha = 1;
-        float fadePerSec = 0;
-    } chars_[kMaxChars];
+    using CharDraw = CharacterVisualState;
+    CharDraw chars_[kMaxChars];
     struct BmpTex { std::string path; int z = 0; float alpha = 1, targetAlpha = 1; float fadePerSec = 0; };
     std::map<int, BmpTex> bmps_;
     // wa2-godot 的 fb 是以 0.5 为中性的全局色调，不是一个不透明色块。
@@ -192,9 +206,12 @@ private:
 
     // ---- UI ----
     enum class UiMode { None, Title, TitleStart, TitleSpecial, TitleNovel,
+                        TitleCg, TitleCgView, TitleScene, TitleBgm, TitleVoice,
                         Menu, Save, Load, Config, Backlog };
     UiMode ui_ = UiMode::None;
     int uiCursor_ = 0;
+    int uiPage_ = 0;
+    int uiScroll_ = 0;
     int backlogScroll_ = 0;
     float autoTimer_ = -1;
     bool autoMode_ = false;
@@ -202,6 +219,12 @@ private:
     bool skipDisable_ = false;
     uint32_t title_ = 0;
     bool titleBgmStarted_ = false;
+    int cgViewSlot_ = -1;
+    int cgViewVariant_ = 0;
+    int replayMode_ = 0;
+    int voiceMessagePlaying_ = -1;
+    bool configResetConfirm_ = false;
+    int configResetCursor_ = 0; // 0=是,1=否
 
     // ---- 路径/配置 ----
     std::string dataDir_, saveDir_;
@@ -213,13 +236,30 @@ private:
     bool clicked_ = false;
     bool cancelClicked_ = false;
     int navX_ = 0, navY_ = 0;       // 菜单/选项单次方向输入
+    bool uiPagePrev_ = false, uiPageNext_ = false;
+    bool pointerPressed_ = false, pointerHeld_ = false;
+    int pointerX_ = -1, pointerY_ = -1;
+    uint32_t pointerHeldSince_ = 0;
+    bool holdSkip_ = false;
     bool movieSkippable_ = false;
     uint32_t timerStart_ = 0;
+
+    // 原版 SYSTEM.sav 中 CG 收藏区、已读消息区与普通系统旗标彼此独立。
+    std::unordered_set<int> unlockedCgs_;
+    std::unordered_set<uint64_t> readMessages_;
+    bool currentMessageWasRead_ = false;
+    bool systemDirty_ = false;
+    uint32_t lastSystemSaveMs_ = 0;
 
     // ---- 内部 ----
     bool LoadGameData();
     void LoadConfigFile();
     void SaveConfigFile();
+    void LoadSystemFile();
+    void SaveSystemFile();
+    void ImportOriginalSystemFile();
+    void MergeProgressFromSaves();
+    void ApplyAudioConfig();
     void TickInput();
     void TickScript(float dt);
     void Render();
@@ -229,17 +269,32 @@ private:
     void RenderCalender();
     void RenderUi();
     void RenderTitleBackdrop();
+    void RenderConfigUi();
+    void RenderCgMode();
+    void RenderCgViewer();
+    void RenderSceneReplay();
+    void RenderBgmMode();
+    void RenderVoiceMessages();
+    void DrawSpecialBackdrop(const std::string& title, const std::string& subtitle,
+                             bool paged = true);
+    void DrawSpecialGridCell(int index, int x, int y, int w, int h,
+                             bool selected, bool unlocked, int imageId);
     void StartChapter(const std::string& scriptName);
+    void StartReplay(int slot);
+    void OpenSpecialMode(UiMode mode);
+    void CloseSpecialMode();
     void UpdateAnims(float dt);
+    bool NeedsContinuousRedraw() const;
     void ClickAdvance();          // 点击推进文本
     void SetupNewBg(const std::string& path, int frame, int x, int y, int offset, float sx, float sy, bool keepChar);
-    void ApplySav(const SaveData& sav);
+    bool ApplySav(const SaveData& sav);
     void BuildSav(SaveData* sav);
     bool SaveToSlotFile(int slot);
     bool LoadFromSlotFile(int slot);
     std::string SlotPath(int slot) const;
 
     Script* Active() { return stack_.empty() ? nullptr : stack_.back().get(); }
+    const Script* Active() const { return stack_.empty() ? nullptr : stack_.back().get(); }
     void MarkAnim(float seconds);
     std::string SlotMeta(int slot);
 
@@ -248,6 +303,11 @@ private:
     void CancelUi();
     void BacklogInput();
     void ConfigAdjustInput(int count);
+    bool PointerIn(int x, int y, int w, int h) const;
+    void ConsumeGridInput(int count, int columns);
+    bool IsCgUnlocked(int id) const;
+    void UnlockCg(int id);
+    uint64_t MessageReadKey(int msgIdx) const;
 
     template <typename Fn>
     void HandleMenuInput(int count, bool allowCancel, Fn onOk) {

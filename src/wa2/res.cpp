@@ -132,6 +132,9 @@ std::string Res::BgName(int id, int timeMode) {
 std::string Res::CgName(int id) {
     return Fmt("v%06d.tga", id);
 }
+std::string Res::TvName(int id) {
+    return Fmt("tv%06d.tga", id);
+}
 std::string Res::HName(int id) {
     return Fmt("h%06d.tga", id);
 }

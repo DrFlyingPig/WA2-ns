@@ -7,17 +7,17 @@
 #include <cstdio>
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: test_gfx_memory <WA2 data dir>\n");
+    if (argc < 2 || argc > 3) {
+        std::fprintf(stderr, "usage: test_gfx_memory <WA2 data dir> [cache MiB]\n");
         return 2;
     }
 
     SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
     SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
     SDL_setenv("SDL_RENDER_DRIVER", "software", 1);
-    // 与 Switch 正式版一致：验证 8 MiB 预算下真实背景、对话框和立绘
-    // 仍能组成完整当前帧工作集，同时旧场景会被及时淘汰。
-    SDL_setenv("WA2_TEXTURE_CACHE_MB", "8", 1);
+    // 默认验证稳定版 8 MiB；可传 20 验证 P1 的较大真实场景工作集。
+    const char* cacheMb = argc == 3 ? argv[2] : "8";
+    SDL_setenv("WA2_TEXTURE_CACHE_MB", cacheMb, 1);
     wa2::LogSetFile("out/gfx_memory.log");
 
     wa2::Res res;

@@ -105,8 +105,13 @@ Val Script::GetVar(const Var& v) const {
         return out;
     case 2: // 局部变量(>=26 走浮点槽,复刻参考实现)
         out.kind = Val::Int;
-        if (v.ival >= kMaxLocalVars) { out.kind = Val::Float; out.f = v.ival >= 26 ? gloFloats[v.ival % 26] : 0; }
-        else out.i = gloInts[v.ival];
+        if (v.ival < 0) return out;
+        if (v.ival >= kMaxLocalVars) {
+            out.kind = Val::Float;
+            out.f = v.ival >= 26 ? gloFloats[v.ival % 26] : 0;
+        } else {
+            out.i = gloInts[v.ival];
+        }
         return out;
     case 3: // 字符串
         out.kind = Val::Str;
@@ -300,14 +305,13 @@ void Script::ParseCalc(Host& host) {
     }
     // 与参考实现一致的弹栈规则:
     //  上述 b 情况:弹出栈顶(a);0x8~0x16(比较/数值):再弹 b,压回结果
-    bool poppedA = false, poppedB = false;
+    bool poppedA = false;
     if (((op >= 1 && op < 0x17) || op == 0x1b || op == 0) && args.size() >= 2) {
         args.pop_back();
         poppedA = true;
     }
     if (op >= 8 && op <= 0x16 && !args.empty()) {
         args.pop_back();
-        poppedB = true;
     }
     (void)hasA; (void)hasB;
 
@@ -455,9 +459,11 @@ bool Script::LoadState(ByteReader& in, Res& res) {
     std::string name = in.Str();
     // 先按名字加载文件本体(会重置 pos/args/entries),再恢复运行态
     uint32_t pos = in.U32();
-    exit_ = in.I32() != 0;
+    const bool savedExit = in.I32() != 0;
     int32_t nArgs = in.I32();
+    if (!in.Ok() || nArgs < 0 || nArgs > 4096) return false;
     std::vector<Var> savedArgs;
+    savedArgs.reserve((size_t)nArgs);
     for (int32_t i = 0; i < nArgs; i++) {
         Var v;
         v.cmd = in.I32(); v.val = in.I32(); v.idx = in.I32(); v.ival = in.I32(); v.fval = in.F32();
@@ -467,7 +473,9 @@ bool Script::LoadState(ByteReader& in, Res& res) {
     for (int i = 0; i < kMaxLocalVars; i++) savedInts[i] = in.I32();
     for (int i = 0; i < kMaxLocalVars; i++) savedFloatsAsInt[i] = in.I32();
     int32_t nEntries = in.I32();
+    if (!in.Ok() || nEntries < 0 || nEntries > 4096) return false;
     std::vector<JumpEntry> savedEntries;
+    savedEntries.reserve((size_t)nEntries);
     for (int32_t i = 0; i < nEntries; i++) {
         JumpEntry e;
         e.type = in.U32(); e.count = in.U32(); e.pos = in.U32(); e.flag = in.I32();
@@ -477,7 +485,9 @@ bool Script::LoadState(ByteReader& in, Res& res) {
     }
     if (!in.Ok()) return false;
     if (!Load(res, name, 0)) return false;
+    if (pos > buf_.size()) return false;
     pos_ = pos;
+    exit_ = savedExit;
     args = std::move(savedArgs);
     for (int i = 0; i < kMaxLocalVars; i++) {
         gloInts[i] = savedInts[i];

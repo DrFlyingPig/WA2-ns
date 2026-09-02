@@ -137,13 +137,13 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
         if (args.size() >= 2 && Arg(args, 1, sc) != -1)
             host.SetVoiceLabel(Arg(args, 1, sc));
         return true;
-    case 0x8a: // VV(_, loop, ch, track, voiceId):按当前标签播音
+    case 0x8a: // VV(chr, volume, loop, channel, voiceId):按当前标签播音
         host.PlayVoice(host.CurrentVoiceLabel(), Arg(args, 4, sc), Arg(args, 0, sc),
-                       Arg(args, 1, sc) == 1, Arg(args, 3, sc));
+                       Arg(args, 1, sc), Arg(args, 2, sc) == 1, Arg(args, 3, sc));
         return true;
-    case 0x8b: // VX(v0, label, v2, ch, loop, track)
+    case 0x8b: // VX(chr, voiceId, label, volume, loop, channel)
         host.PlayVoice(Arg(args, 2, sc), Arg(args, 1, sc), Arg(args, 0, sc),
-                       Arg(args, 4, sc) == 1, Arg(args, 5, sc));
+                       Arg(args, 3, sc), Arg(args, 4, sc) == 1, Arg(args, 5, sc));
         return true;
     case 0x8c: // VW(track):等语音结束
         host.WaitVoice(Arg(args, 1, sc));
@@ -197,11 +197,11 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
     case 0x9b: // CW(立即)
         host.AddChar(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc));
         return true;
-    case 0x9c: // CR(pos, _, frame)
+    case 0x9c: // CR(id, _, frame):从期望列表移除角色并提交整张列表
         host.RemoveChar(Arg(args, 0, sc));
         host.UpdateChar(Arg(args, 2, sc));
         return false;
-    case 0x9d: // CRW(立即)
+    case 0x9d: // CRW(id):只排队移除，等待后续 C/CR/BC 统一提交
         host.RemoveChar(Arg(args, 0, sc));
         return true;
 
@@ -271,7 +271,15 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
     // ---------------- 计时/流程/旗标 ----------------
     case 0xc2: host.WaitMs(Arg(args, 0, sc) * kMsPerFrame); return false;
     case 0xc3: host.StartTimer(); return true;
-    case 0xc4: host.WaitMs((float)Arg(args, 0, sc)); return false;
+    case 0xc4:
+#ifdef WA2_DIAG_C4_RELATIVE_TIMER
+        // WaitTimer(targetMs) 使用 StartTimer 起算的绝对时间点。旧实现把 targetMs
+        // 当成“从现在开始再等”的相对时长，连续对白会重复累加之前已经流逝的时间。
+        host.WaitUntilTimerMs((float)Arg(args, 0, sc));
+#else
+        host.WaitMs((float)Arg(args, 0, sc));
+#endif
+        return false;
     // 上游 ParseCmd 的 while 条件会在 GoTitle 改变游戏状态后立刻停下。
     // 本实现的 VM 不持有 UI 状态，因此这里显式让出，避免旧脚本继续执行。
     case 0xc5: host.GoTitle(); args.clear(); return false;
@@ -309,7 +317,7 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
     case 0xdb: host.StopSkip(); return false;                 // SkipOFF
     case 0xdc: host.SetNovelMode(Arg(args, 0, sc) != 0); return false;
     case 0xdd: host.SetEroMode(Arg(args, 0, sc) == 1); return true;
-    case 0xde: host.PushInt(host.ReplayMode() ? 1 : 0); return true;
+    case 0xde: host.PushInt(host.ReplayMode()); return true;
     case 0xe1: // B2(无归一化的缩放参数)
         host.RenderImage(Arg(args, 2, sc) + 10 * Arg(args, 1, sc), Arg(args, 0, sc), false, 0,
                          Arg(args, 3, sc), Arg(args, 4, sc), Arg(args, 5, sc), Arg(args, 6, sc),

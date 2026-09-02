@@ -39,6 +39,7 @@ public:
     // ---------- 命名规则 ----------
     static std::string BgName(int id, int timeMode);        // B{...}.tga
     static std::string CgName(int id);                      // v{id:6}.tga
+    static std::string TvName(int id);                      // tv{id:6}.tga (特别模式缩略图)
     static std::string HName(int id);                       // h{id:6}.tga
     static std::string CharName(int charId, int no);        // {prefix}{no:6}.tga
     static std::string MaskName(int id);                    // f0{id:3}.bmp

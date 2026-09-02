@@ -2,6 +2,9 @@
 #include "wa2/engine.h"
 #include "wa2/util.h"
 
+#include <atomic>
+#include <cstdio>
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -30,12 +33,15 @@ static std::string ExeDirectoryUtf8() {
 }
 #endif
 
-#if defined(__SWITCH__) && defined(WA2_WITH_DEMO)
+#ifdef __SWITCH__
 #include <switch.h>
+#endif
+
+#if defined(__SWITCH__) && defined(WA2_WITH_DEMO)
 #include <switch/runtime/devices/romfs_dev.h>
 #endif
 
-int main(int argc, char** argv) {
+static int RunApplication(int argc, char** argv) {
 #if defined(__SWITCH__) && defined(WA2_WITH_DEMO)
     if (R_FAILED(romfsInit())) {
         // romfs 挂载失败时仍可运行(sdmc 数据模式)
@@ -48,6 +54,24 @@ int main(int argc, char** argv) {
     wa2::LogSetFile("wa2.log");
 #endif
     wa2::Log(wa2::LogLevel::Info, "WA2-ns starting");
+#ifdef WA2_DIAG_CHARACTER_LIFECYCLE
+    wa2::Log(wa2::LogLevel::Info,
+             "build: F1 character desired-list lifecycle enabled (P2B baseline)");
+#endif
+#ifdef __SWITCH__
+    if (Thread* self = threadGetSelf()) {
+#ifdef WA2_DIAG_PARALLEL_FRAMEBUFFER
+        wa2::Log(wa2::LogLevel::Info,
+                 "runtime: engine thread=libnx-native stack=%.1f MiB core=%u",
+                 (double)self->stack_sz / (1024.0 * 1024.0),
+                 (unsigned)svcGetCurrentProcessorNumber());
+#else
+        wa2::Log(wa2::LogLevel::Info,
+                 "runtime: engine thread=libnx-native stack=%.1f MiB",
+                 (double)self->stack_sz / (1024.0 * 1024.0));
+#endif
+    }
+#endif
 
     std::string dataDir;
 #ifdef _WIN32
@@ -80,17 +104,87 @@ int main(int argc, char** argv) {
     int rc = 0;
     {
         wa2::Engine engine;
-        if (!engine.Init(dataDir)) {
+        const bool initialized = engine.Init(dataDir);
+        if (!initialized) {
             wa2::Log(wa2::LogLevel::Error, "engine init failed");
             wa2::LogFlush();
             rc = 1;
         } else {
             engine.Run();
-            engine.Shutdown();
         }
+        wa2::Log(wa2::LogLevel::Info, "runtime: engine shutdown requested init=%d",
+                 initialized ? 1 : 0);
+        engine.Shutdown();
+        wa2::Log(wa2::LogLevel::Info, "runtime: engine shutdown returned");
     }
 #if defined(__SWITCH__) && defined(WA2_WITH_DEMO)
     romfsExit();
 #endif
     return rc;
 }
+
+#ifdef __SWITCH__
+namespace {
+constexpr size_t kEngineThreadStack = 4u * 1024u * 1024u;
+constexpr int kEngineThreadCore = -2;
+
+struct EngineThreadContext {
+    int argc = 0;
+    char** argv = nullptr;
+    int result = 1;
+    std::atomic<bool> completed{false};
+};
+
+void EngineThreadMain(void* opaque) {
+    auto* context = static_cast<EngineThreadContext*>(opaque);
+    context->result = RunApplication(context->argc, context->argv);
+    context->completed.store(true, std::memory_order_release);
+}
+} // namespace
+
+int main(int argc, char** argv) {
+    // HBLoader 的 NRO 入口线程只有约 128 KiB 栈。真实数据下，中文字体、
+    // SDL 软件渲染和存档场景重建会叠加较深的调用链；旧版就在这条入口
+    // 线程上运行整个 Engine，Atmosphere 报告显示其异常展开栈已损坏。
+    // 入口线程只保留启动/等待职责，游戏主体改在 libnx 原生大栈线程运行。
+    EngineThreadContext context{};
+    context.argc = argc;
+    context.argv = argv;
+    Thread engineThread{};
+    Result rc = threadCreate(&engineThread, EngineThreadMain, &context, nullptr,
+                             kEngineThreadStack, 0x2c, kEngineThreadCore);
+    if (R_FAILED(rc)) {
+        std::fprintf(stderr, "WA2-ns: engine threadCreate failed: 0x%x\n", rc);
+        return 1;
+    }
+    rc = threadStart(&engineThread);
+    if (R_FAILED(rc)) {
+        std::fprintf(stderr, "WA2-ns: engine threadStart failed: 0x%x\n", rc);
+        threadClose(&engineThread);
+        return 1;
+    }
+    rc = threadWaitForExit(&engineThread);
+    const bool workerCompleted = context.completed.load(std::memory_order_acquire);
+    if (R_SUCCEEDED(rc) && !workerCompleted) {
+        // 不能让 hbloader 在 SDL 回调线程仍存活时卸载 NRO。
+        // 必须在 threadClose 释放 Engine/Audio 所在的工作线程栈之前
+        // 取消回调并 join 音频线程。
+        wa2::Log(wa2::LogLevel::Error,
+                 "runtime: engine worker exited without completion marker");
+        wa2::Audio::EmergencyShutdown();
+        SDL_Quit();
+        wa2::LogFlush();
+    }
+    const Result closeRc = threadClose(&engineThread);
+    if (R_FAILED(rc) || R_FAILED(closeRc) || !workerCompleted) {
+        std::fprintf(stderr, "WA2-ns: engine thread join failed: 0x%x/0x%x\n",
+                     rc, closeRc);
+        return 1;
+    }
+    return context.result;
+}
+#else
+int main(int argc, char** argv) {
+    return RunApplication(argc, argv);
+}
+#endif

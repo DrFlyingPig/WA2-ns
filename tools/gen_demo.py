@@ -194,8 +194,8 @@ class Bnr:
             self.call(0x9B)     # CW:立即
         self.flush()
 
-    def chara_remove(self, pos, frame=0):
-        self.push_int(pos)
+    def chara_remove(self, cid, frame=0):
+        self.push_int(cid)
         self.push_int(0)
         if frame > 0:
             self.push_int(frame)
@@ -336,7 +336,7 @@ def build_9003():
     s.say(1, 16)
     s.say(2, 17)
     s.say(1, 18)
-    s.chara_remove(1, 20)
+    s.chara_remove(CHAR_AOI, 20)
     s.wait(20)
     s.fade_out(60)
     s.wait(80)
