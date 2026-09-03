@@ -150,10 +150,10 @@ PC/无头测试与 Switch 共享同一套 VM 语义。
 
 ## 📚 参考与致谢
 
-格式与语义逆向的社区成果是本项目的前提:
+以下社区成果是本项目的前提:
 
 - [dorakyuraduang/wa2-godot](https://github.com/dorakyuraduang/wa2-godot) —
-  PC 版引擎重实现(Godot/C#),`reference/` 保存其源码作学习参考
+  PC 版引擎重实现(Godot/C#)以作学习参考
 - [wetor/LuckSystem](https://github.com/wetor/LuckSystem) 与
   [wetor/LucaSystemTools](https://github.com/wetor/LucaSystemTools) —
   LucaSystem(P/PS3/PSV 版)格式工具
