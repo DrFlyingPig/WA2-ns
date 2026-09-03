@@ -59,6 +59,13 @@ public:
     size_t Free() const { return Capacity - Available(); }
     static constexpr size_t Size() { return Capacity; }
 
+    // 丢弃现有内容。只允许在没有消费者活动时调用(如新播放开始前);
+    // 否则音频线程可能读到回退后的区域。生产者侧对齐:read 追上 write。
+    void Reset() {
+        const uint64_t write = write_.load(std::memory_order_acquire);
+        read_.store(write, std::memory_order_release);
+    }
+
 private:
     alignas(64) std::array<uint8_t, Capacity> data_{};
     alignas(64) std::atomic<uint64_t> read_{0};

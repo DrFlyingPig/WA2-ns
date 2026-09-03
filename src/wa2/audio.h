@@ -124,10 +124,13 @@ private:
     std::atomic<MovieAudioSource*> movieSrc_{nullptr};
     // 后混音回调专用暂存(注册源时按设备缓冲上限分配)。
     std::vector<uint8_t> movieMixScratch_;
-    // 空样本循环块:保证电影播放期间混音回调始终有活动通道,
-    // 后混音效果链稳定执行(部分 SDL_mixer 版本在全静音时会跳过)。
-    std::vector<uint8_t> movieSilence_;
-    Mix_Chunk* movieSilenceChunk_ = nullptr;
+    // 电影 PCM 经 Mix_HookMusic 进入混音回调:它不依赖通道状态,
+    // 比 MIX_CHANNEL_POST + 静音块占通道(真机未生效)更可靠。
+    static void SDLCALL MovieMusicHook(void* udata, Uint8* stream, int len);
+    // 影片音频消费诊断:后混音回调每次调用/字节数计数,由 Update 输出。
+    std::atomic<uint64_t> movieMixCalls_{0};
+    std::atomic<uint64_t> movieMixBytes_{0};
+    std::atomic<uint64_t> movieMixZero_{0};
     void MixMovieAudio(void* stream, int len);
 
     void FreeBgm();

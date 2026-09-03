@@ -245,6 +245,7 @@ bool Engine::Init(const std::string& dataDirOverride) {
     if (!audio_.Init()) return false;
     if (!video_.Init(gfx_.renderer())) return false;
     video_.BindAudio(&audio_);
+    video_.BindGfx(&gfx_);
     ApplyAudioConfig();
 
     // 原版标题场景自己负责 Logo/背景动画；启动阶段只保留极短黑屏。
@@ -308,6 +309,8 @@ void Engine::Run() {
                 while (scriptAcc_ >= kScriptTick) { scriptAcc_ -= kScriptTick; TickScript(kScriptTick); }
             }
             Render();
+            ApplyMaskTransition();
+            video_.PresentVideoFrame();
             if (frames == 360) {
                 if (const char* shot = std::getenv("WA2_REAL_SCREENSHOT")) {
                     if (*shot) gfx_.SaveScreenshot(shot);
@@ -477,7 +480,23 @@ void Engine::Run() {
 #endif
         UpdateAnims(dt);
 
-        if (state_ == State::Logo && now / 1000.0f >= logoUntil_) {
+        // 启动公司 Logo 影片(mv000):原版在 LOGO 状态播放,可点击跳过。
+        // 只在首次进入 Logo 时尝试;文件缺失则该状态下限(logoUntil_)后进入 Title。
+        if (state_ == State::Logo && !bootLogoLaunched_) {
+            bootLogoLaunched_ = true;
+            const std::string logoPath = PathJoin(dataDir_, "mv000.pak");
+            if (FileExists(logoPath) && video_.Play(logoPath, 255)) {
+                wait_.movie = true;         // 错过/跳过逻辑不再依赖脚本影片路径
+                movieSkippable_ = true;     // Logo 可点击跳过(见 TickInput)
+                logoUntil_ = -1.0f;         // 用影片结束推进,不用计时
+            } else {
+                logoUntil_ = now / 1000.0f + 0.15f;  // 无影片则黑屏片刻
+            }
+        }
+        const bool bootDone = (logoUntil_ < 0.0f)
+            ? !wait_.movie && !video_.Playing()
+            : now / 1000.0f >= logoUntil_;
+        if (state_ == State::Logo && bootDone) {
             state_ = State::Title;
             ui_ = UiMode::Title;
             uiCursor_ = 0;
@@ -514,7 +533,11 @@ void Engine::Run() {
         ++perfLoops;
         if (shouldDraw) {
             const uint64_t drawStart = SDL_GetPerformanceCounter();
+            // 直通 framebuffer 路径已撤(真机画面未达屏幕,数据全绿但黑屏);
+            // 恢复已验证的常规路径:视频纹理经 Render blit 进 softwareFrame。
             Render();
+            ApplyMaskTransition();
+            video_.PresentVideoFrame();   // 帧直写必须在 Clear() 之后
             gfx_.Present();
             const uint64_t drawTicks = SDL_GetPerformanceCounter() - drawStart;
             perfDrawTicks += drawTicks;
@@ -552,8 +575,11 @@ void Engine::Run() {
         }
 #else
         Render();
+        ApplyMaskTransition();
+        video_.PresentVideoFrame();
         gfx_.Present();
 #endif
+        (void)0;
 
 #ifndef __SWITCH__
         if (!uiScreenshot.empty() && ++uiScreenshotFrames >= 4) {
@@ -818,6 +844,11 @@ void Engine::UpdateAnims(float dt) {
         trans_.t += dt;
         if (trans_.t >= trans_.dur) {
             trans_.active = false;
+            trans_.maskMode = false;
+            trans_.oldPix.clear();
+            trans_.oldPix.shrink_to_fit();
+            trans_.maskPix.clear();
+            trans_.maskPix.shrink_to_fit();
             if (trans_.snap) gfx_.ReleaseSnapshot(trans_.snap);
             trans_.snap = nullptr;
         }
@@ -1251,9 +1282,9 @@ void Engine::StopSkip() { skipMode_ = false; }
 
 // ---------------- Host:画面 ----------------
 void Engine::SetupNewBg(const std::string& path, int frame, int x, int y, int offset,
-                        float sx, float sy, bool keepChar) {
+                        float sx, float sy, bool keepChar, int efc) {
     std::string oldPath = bg_.path;
-    Log(LogLevel::Info, "engine: setup bg '%s' trans=%d", path.c_str(), frame);
+    Log(LogLevel::Info, "engine: setup bg '%s' trans=%d efc=%d", path.c_str(), frame, efc);
     bg_.path = path;
     bg_.x = (float)(x - offset);
     bg_.y = (float)y;
@@ -1264,10 +1295,65 @@ void Engine::SetupNewBg(const std::string& path, int frame, int x, int y, int of
     // 0 帧切换直接落到新背景；有时长时截取上一帧并交叉淡化。
     if (frame <= 0) {
         trans_.active = false;
+        trans_.maskMode = false;
+        trans_.oldPix.clear();
+        trans_.oldPix.shrink_to_fit();
+        trans_.maskPix.clear();
+        trans_.maskPix.shrink_to_fit();
         if (trans_.snap) gfx_.ReleaseSnapshot(trans_.snap);
         trans_.snap = nullptr;
         MarkAnim(0.0f);
         return;
+    }
+
+    // 掩码溶解:efc>=128,低 7 位是掩码编号 f0{id:03d}.bmp(8-bit 灰度)。
+    // 与原版一致:旧画面是过渡开始时的整屏(含立绘/文字窗),由当前
+    // softwareFrame_(CPU surface)直接捕获;掩码图按原尺寸采样。
+    trans_.maskMode = false;
+    trans_.oldPix.clear();
+    trans_.maskPix.clear();
+    if (efc >= 128) {
+        const int maskId = efc & 0x7f;
+        std::vector<uint8_t> data = res_.Load(Res::MaskName(maskId));
+        SDL_RWops* rw = data.empty() ? nullptr : SDL_RWFromMem(data.data(), (int)data.size());
+        SDL_Surface* m = rw ? SDL_LoadBMP_RW(rw, 1) : nullptr;
+        if (m) {
+            // 统一转成 8-bit 灰度数组(按亮度);8-bit 调色板 BMP 经转换同样正确。
+            SDL_Surface* c = SDL_ConvertSurfaceFormat(m, SDL_PIXELFORMAT_RGB888, 0);
+            if (c) {
+                trans_.maskW = c->w;
+                trans_.maskH = c->h;
+                trans_.maskPix.resize((size_t)c->w * c->h);
+                const uint8_t* px = (const uint8_t*)c->pixels;
+                const int pitch = c->pitch;
+                for (int yy = 0; yy < c->h; ++yy) {
+                    const uint8_t* row = px + (size_t)yy * pitch;
+                    uint8_t* dst = trans_.maskPix.data() + (size_t)yy * c->w;
+                    for (int xx = 0; xx < c->w; ++xx) {
+                        dst[xx] = (uint8_t)((row[xx * 3] * 77 + row[xx * 3 + 1] * 151 +
+                                             row[xx * 3 + 2] * 28) >> 8);
+                    }
+                }
+                SDL_FreeSurface(c);
+            }
+            SDL_FreeSurface(m);
+        } else if (!data.empty()) {
+            Log(LogLevel::Warn, "engine: mask f0%03d.bmp decode failed: %s",
+                maskId, SDL_GetError());
+        }
+        if (!trans_.maskPix.empty() && gfx_.CaptureFramePixels(trans_.oldPix)) {
+            trans_.maskMode = true;
+            trans_.active = true;
+            trans_.t = 0;
+            trans_.dur = frame * kFrameTime;
+            MarkAnim(trans_.dur);
+            Log(LogLevel::Info, "engine: mask dissolve id=%d %dx%d dur=%.2fs",
+                maskId, trans_.maskW, trans_.maskH, trans_.dur);
+            return;
+        }
+        Log(LogLevel::Warn, "engine: mask f0%03d unavailable; fallback to crossfade", maskId);
+        trans_.maskPix.clear();
+        trans_.maskPix.shrink_to_fit();
     }
 
     trans_.snap = gfx_.CaptureScreen();
@@ -1278,6 +1364,24 @@ void Engine::SetupNewBg(const std::string& path, int frame, int x, int y, int of
     MarkAnim(secs);
     (void)oldPath;
     (void)keepChar;
+}
+
+void Engine::ApplyMaskTransition() {
+    if (!trans_.active || !trans_.maskMode) return;
+    if (trans_.oldPix.empty() || trans_.maskPix.empty()) {
+        trans_.maskMode = false;
+        return;
+    }
+    // 当前帧(新场景)已在软件帧缓冲里;按掩码进度与旧帧混合后送回。
+    static std::vector<uint8_t> frame;
+    if (!gfx_.CaptureFramePixels(frame)) {
+        trans_.maskMode = false;
+        return;
+    }
+    gfx_.BlendMaskPixels(frame.data(), trans_.oldPix.data(),
+                         trans_.maskPix.data(), trans_.maskW, trans_.maskH,
+                         trans_.dur > 0 ? trans_.t / trans_.dur : 1.0f);
+    gfx_.PresentBlendedFrame(frame);
 }
 
 bool Engine::NeedsContinuousRedraw() const {
@@ -1320,7 +1424,7 @@ void Engine::RenderImage(int id, int efc, bool keepChar, int type, int frame,
     scene_.bg.sx = sx > 0 ? sx : 1.0f;
     scene_.bg.sy = sy > 0 ? sy : 1.0f;
     scene_.bg.type = type;
-    SetupNewBg(path, frame, x, y, offset, sx, sy, keepChar);
+    SetupNewBg(path, frame, x, y, offset, sx, sy, keepChar, efc);
     // 参考实现每次 B/V 都清空期望角色列表；BC 则把 CW/CRW 排队的
     // 列表与背景过渡一起提交。两条路径都必须同步画面槽位。
     if (!keepChar) scene_.ClearChars();
@@ -1466,6 +1570,8 @@ void Engine::PlayMovie(int movieId, int flagIdx) {
     movieSkippable_ = flagIdx >= 0 && ReadSysFlag(flagIdx) == 1;
     if (flagIdx >= 0) WriteSysFlag(flagIdx, 1);
     skipMode_ = false;
+    Log(LogLevel::Info, "engine: PlayMovie id=%d path=%s exists=%d",
+        movieId, path.c_str(), FileExists(path) ? 1 : 0);
     audio_.StopAll();
     const int movieVolume = (config_.masterVolume * config_.bgmVolume + 127) / 255;
     if (FileExists(path) && video_.Play(path, movieVolume)) {
@@ -1627,7 +1733,9 @@ void Engine::Render() {
         gfx_.DrawTextureFit(bgTex, kVirtualW / 2.0f + bg_.x, kVirtualH / 2.0f + bg_.y,
                             bg_.sx, bg_.sy, 1.0f);
     }
-    if (trans_.active) {
+    if (trans_.active && !trans_.maskMode) {
+        // 掩码溶解不走这里:新场景已在 softwareFrame_,由 ApplyMaskTransition
+        // 在 Present 前与旧帧做 CPU 混合;此处的 snap/黑淡出只服务普通过渡。
         float a = 1.0f - trans_.t / (trans_.dur > 0 ? trans_.dur : 0.01f);
         if (trans_.snap) {
             SDL_Rect dst{0, 0, kVirtualW, kVirtualH};
@@ -3209,12 +3317,16 @@ void Engine::Shutdown() {
         SaveConfigFile();
         if (systemDirty_) SaveSystemFile();
     }
-    Log(LogLevel::Info, "engine: shutdown video begin");
-    video_.Shutdown();
-    Log(LogLevel::Info, "engine: shutdown video complete");
+    // 关停顺序:audio 先于 video。影片音轨的消费者是 SDL 音频回调
+    // (Mix_HookMusic 指向 Audio);先注销音频回调/设备,再销毁 VideoPlayer
+    // 的环形缓冲和 bridge,否则 hbl 退出时检测到残留的 audout 服务会话
+    // (SFCO)触发 User Break,表现为大气层系统崩溃。
     Log(LogLevel::Info, "engine: shutdown audio begin");
     audio_.Shutdown();
     Log(LogLevel::Info, "engine: shutdown audio complete");
+    Log(LogLevel::Info, "engine: shutdown video begin");
+    video_.Shutdown();
+    Log(LogLevel::Info, "engine: shutdown video complete");
     Log(LogLevel::Info, "engine: shutdown gfx begin");
     gfx_.Shutdown();
     initialized_ = false;

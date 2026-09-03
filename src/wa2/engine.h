@@ -155,6 +155,12 @@ private:
         bool active = false;
         float t = 0, dur = 0;      // 秒
         SDL_Texture* snap = nullptr;
+        // 掩码溶解(B 命令 efc>=128):oldPix=过渡开始时的整屏像素,
+        // mask 为 8-bit 灰度图 f0{id:03d}.bmp 的原尺寸数据。
+        bool maskMode = false;
+        std::vector<uint8_t> oldPix;
+        std::vector<uint8_t> maskPix;
+        int maskW = 0, maskH = 0;
     } trans_;
     // S 背景平移默认与脚本并行；只有 WSZ 才等待它。
     struct BgMoveAnim {
@@ -194,6 +200,7 @@ private:
     std::vector<uint8_t> sysFlags_;
     State state_ = State::Logo;
     float logoUntil_ = 0;
+    bool bootLogoLaunched_ = false;  // 是否已尝试播放启动公司 Logo 影片(mv000)
     float scriptAcc_ = 0;
 
     // ---- 选项 ----
@@ -286,7 +293,9 @@ private:
     void UpdateAnims(float dt);
     bool NeedsContinuousRedraw() const;
     void ClickAdvance();          // 点击推进文本
-    void SetupNewBg(const std::string& path, int frame, int x, int y, int offset, float sx, float sy, bool keepChar);
+    void SetupNewBg(const std::string& path, int frame, int x, int y, int offset, float sx, float sy, bool keepChar, int efc = 0);
+    // 掩码溶解:在 Render 之后、Present 之前对新帧做 CPU 混合。
+    void ApplyMaskTransition();
     bool ApplySav(const SaveData& sav);
     void BuildSav(SaveData* sav);
     bool SaveToSlotFile(int slot);

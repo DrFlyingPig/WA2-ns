@@ -88,6 +88,10 @@ static bool StartFramebufferSwizzlePool() {
     FramebufferSwizzlePool& pool = g_framebufferSwizzlePool;
     pool.stop.store(false, std::memory_order_release);
     semaphoreInit(&pool.done, 0);
+    // worker 固定到 CPU2/3:引擎线程(-2 与系统共享 CPU0/1)之外的第二组核。
+    // 视频期间 WMV3 解码线程与引擎线程都在 CPU0/1 满载,若 worker 也留在
+    // -2,每帧 Present 的 swizzle 都会抢解码的核,画面规律性掉帧。
+    static const int kWorkerCores[kFramebufferWorkerCount] = {2, 3, 2};
     for (uint32_t i = 0; i < kFramebufferWorkerCount; ++i) {
         semaphoreInit(&pool.starts[i], 0);
         pool.contexts[i].pool = &pool;
@@ -96,7 +100,7 @@ static bool StartFramebufferSwizzlePool() {
         // 后续独立变量，避免再次把线程创建和亲和性混在同一版中。
         Result rc = threadCreate(&pool.threads[i], FramebufferSwizzleWorker,
                                  &pool.contexts[i], nullptr,
-                                 kFramebufferWorkerStack, 0x2d, -2);
+                                 kFramebufferWorkerStack, 0x2d, kWorkerCores[i]);
         const bool created = R_SUCCEEDED(rc);
         if (created) rc = threadStart(&pool.threads[i]);
         if (R_FAILED(rc)) {
@@ -539,6 +543,7 @@ void Gfx::Shutdown() {
     for (SDL_Joystick* joystick : joysticks_) SDL_JoystickClose(joystick);
     joysticks_.clear();
     if (renderer_) { SDL_DestroyRenderer(renderer_); renderer_ = nullptr; }
+    if (blendTex_) { SDL_DestroyTexture(blendTex_); blendTex_ = nullptr; }
 #ifdef __SWITCH__
     if (softwareFrame_) { SDL_FreeSurface(softwareFrame_); softwareFrame_ = nullptr; }
     if (nativeFramebuffer_) {
@@ -620,9 +625,17 @@ size_t Gfx::EvictUnused(size_t incomingBytes, bool allUnused) {
 }
 
 Tex* Gfx::Get(const std::string& lowerName, Res& res, const std::string& effectMode) {
+    // 缓存键必须包含 effectMode:LUT 染色发生在纹理创建时(直接改写
+    // surface 像素再上传)。回想场景把立绘/背景染蓝后若仍用裸文件名作键,
+    // 退出回想后普通场景会命中已染色的脏缓存,立绘在错误的地方变蓝。
+    std::string key = lowerName;
+    if (!effectMode.empty()) {
+        key += '@';
+        key += ToLower(effectMode);
+    }
     // cache_ 为 std::map:节点地址稳定；LRU 不淘汰当前帧已经 Get 的节点，
     // 因此 RenderAdv 中先取得 window/frame 再绘制也不会留下悬垂指针。
-    auto it = cache_.find(lowerName);
+    auto it = cache_.find(key);
     if (it != cache_.end()) {
         it->second.lastUsedFrame = frameSerial_;
         return &it->second;
@@ -692,15 +705,15 @@ Tex* Gfx::Get(const std::string& lowerName, Res& res, const std::string& effectM
         Log(LogLevel::Warn, "gfx: upload %s failed: %s", lowerName.c_str(), SDL_GetError());
         return nullptr;
     }
-    cache_[lowerName] = t;
+    cache_[key] = t;
     cacheBytes_ += t.bytes;
     ++textureLoadCount_;
     Log(LogLevel::Info, "gfx: loaded %s (%dx%d cache=%.1f/%.1f MiB)",
-        lowerName.c_str(), t.w, t.h,
+        key.c_str(), t.w, t.h,
         (double)cacheBytes_ / (1024.0 * 1024.0),
         (double)cacheBudgetBytes_ / (1024.0 * 1024.0));
     if ((textureLoadCount_ % 32u) == 0) LogHeapStats("after 32 texture loads");
-    return &cache_[lowerName];
+    return &cache_[key];
 }
 
 Tex* Gfx::LoadMask(const std::string& lowerName, Res& res) {
@@ -730,6 +743,28 @@ void Gfx::Clear() {
     }
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
     SDL_RenderClear(renderer_);
+}
+
+bool Gfx::PresentVideoFrameDirect(const uint8_t* bgra, int pitch) {
+    // 安全版直通:视频帧直接写 softwareFrame_,随后调用方走常规 Present。
+    // 与失败的 framebuffer 直通不同:显示提交链路(Present 的 swizzle/
+    // framebufferEnd)原样保留,只省掉 UpdateTexture+RenderCopy 两层
+    // 全屏拷贝(纹理路径实测 11MB/帧的搬运把 A57 压到跳帧)。
+    // 帧尺寸须与 softwareFrame_ 一致(视频均为 1280x720)。
+    if (!softwareFrame_ || !bgra) return false;
+    if (pitch != softwareFrame_->pitch) {
+        // 行距不一致时逐行拷;一致时一次 memcpy。
+        const size_t rowBytes = (size_t)kVirtualW * 4u;
+        uint8_t* dst = (uint8_t*)softwareFrame_->pixels;
+        for (int y = 0; y < kVirtualH; ++y) {
+            std::memcpy(dst + (size_t)y * softwareFrame_->pitch,
+                        bgra + (size_t)y * pitch, rowBytes);
+        }
+        return true;
+    }
+    std::memcpy(softwareFrame_->pixels, bgra,
+                (size_t)softwareFrame_->pitch * kVirtualH);
+    return true;
 }
 
 void Gfx::Present() {
@@ -800,6 +835,94 @@ SDL_Texture* Gfx::CaptureScreen() {
 }
 
 void Gfx::ReleaseSnapshot(SDL_Texture* t) { (void)t; /* 复用,不销毁 */ }
+
+bool Gfx::CaptureFramePixels(std::vector<uint8_t>& out) {
+    out.resize((size_t)kVirtualW * kVirtualH * 4);
+#ifdef __SWITCH__
+    // softwareFrame_ 就是 CPU 侧的画面,直接复制,无 GPU 往返。
+    if (!softwareFrame_) return false;
+    const uint8_t* src = (const uint8_t*)softwareFrame_->pixels;
+    const int pitch = softwareFrame_->pitch;
+    for (int y = 0; y < kVirtualH; ++y) {
+        std::memcpy(out.data() + (size_t)y * kVirtualW * 4,
+                    src + (size_t)y * pitch, (size_t)kVirtualW * 4);
+    }
+    return true;
+#else
+    SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(
+        0, kVirtualW, kVirtualH, 32, SDL_PIXELFORMAT_RGBA8888);
+    if (!s) return false;
+    const bool ok = SDL_RenderReadPixels(renderer_, nullptr,
+                                         SDL_PIXELFORMAT_RGBA8888,
+                                         s->pixels, s->pitch) == 0;
+    if (ok) {
+        for (int y = 0; y < kVirtualH; ++y) {
+            std::memcpy(out.data() + (size_t)y * kVirtualW * 4,
+                        (const uint8_t*)s->pixels + (size_t)y * s->pitch,
+                        (size_t)kVirtualW * 4);
+        }
+    }
+    SDL_FreeSurface(s);
+    return ok;
+#endif
+}
+
+void Gfx::BlendMaskPixels(uint8_t* frame, const uint8_t* oldPix,
+                          const uint8_t* mask, int maskW, int maskH,
+                          float progress) {
+    if (!frame || !oldPix || !mask || maskW <= 0 || maskH <= 0) return;
+    if (progress >= 1.0f) {
+        // 新画面即结果。
+        return;
+    }
+    const float threshold = std::clamp(progress, 0.0f, 1.0f) * 255.0f;
+    const size_t npix = (size_t)kVirtualW * kVirtualH;
+    for (size_t i = 0; i < npix; ++i) {
+        const int x = (int)(i % (size_t)kVirtualW);
+        const int y = (int)(i / (size_t)kVirtualW);
+        const int mx = (int)((int64_t)x * maskW / kVirtualW);
+        const int my = (int)((int64_t)y * maskH / kVirtualH);
+        const int m = mask[(size_t)my * maskW + mx];
+        // mask 小的区域先显示新画面;阈值附近 32 级软边。
+        int a = (int)((threshold - (float)m) * 8.0f) + 32;
+        if (a <= 0) {
+            uint8_t* dst = frame + i * 4;
+            const uint8_t* o = oldPix + i * 4;
+            dst[0] = o[0]; dst[1] = o[1]; dst[2] = o[2]; dst[3] = o[3];
+            continue;
+        }
+        if (a >= 255) continue;   // 新画面已在位
+        const float f = a / 255.0f;
+        uint8_t* dst = frame + i * 4;
+        const uint8_t* o = oldPix + i * 4;
+        for (int c = 0; c < 4; ++c)
+            dst[c] = (uint8_t)((int)o[c] + (int)((int)dst[c] - (int)o[c]) * f);
+    }
+}
+
+void Gfx::PresentBlendedFrame(const std::vector<uint8_t>& blended) {
+    if (blended.size() != (size_t)kVirtualW * kVirtualH * 4) return;
+#ifdef __SWITCH__
+    if (!softwareFrame_) return;
+    uint8_t* dst = (uint8_t*)softwareFrame_->pixels;
+    const int pitch = softwareFrame_->pitch;
+    for (int y = 0; y < kVirtualH; ++y) {
+        std::memcpy(dst + (size_t)y * pitch,
+                    blended.data() + (size_t)y * kVirtualW * 4,
+                    (size_t)kVirtualW * 4);
+    }
+#else
+    if (!blendTex_) {
+        blendTex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
+                                      SDL_TEXTUREACCESS_STREAMING,
+                                      kVirtualW, kVirtualH);
+        if (blendTex_) SDL_SetTextureBlendMode(blendTex_, SDL_BLENDMODE_NONE);
+    }
+    if (!blendTex_) return;
+    SDL_UpdateTexture(blendTex_, nullptr, blended.data(), kVirtualW * 4);
+    SDL_RenderCopy(renderer_, blendTex_, nullptr, nullptr);
+#endif
+}
 
 bool Gfx::SaveScreenshot(const std::string& path) {
     SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(

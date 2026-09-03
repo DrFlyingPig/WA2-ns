@@ -57,8 +57,25 @@ public:
     // ---- 帧 ----
     void Clear();
     void Present();
+    // 视频直通:播放期间把 BGRA 帧直接 swizzle 进 framebuffer,跳过
+    // SDL 纹理更新 + softwareFrame blit 两层全屏拷贝。返回 false 表示
+    // 当前环境不可直通(调用方回退常规路径)。调用后本帧不再需要 Present。
+    bool PresentVideoFrameDirect(const uint8_t* bgra, int pitch);
     SDL_Texture* CaptureScreen();   // 屏幕快照(过渡起始画面);用完需 ReleaseSnapshot
     void ReleaseSnapshot(SDL_Texture* t);
+    // ---- 掩码溶解过渡(CPU 域混合,Switch/PC 通用)----
+    // 抓取当前帧像素(RGBA8888, 1280x720)。Switch 直接复制 softwareFrame_,
+    // PC 走一次 RenderReadPixels(仅过渡开始时调用一次)。
+    bool CaptureFramePixels(std::vector<uint8_t>& out);
+    // 按 mask+progress 混合:dst[i] = old*(1-a) + new*a,
+    // a = clamp((threshold - mask)*8, 0..255)/255,threshold = progress*255。
+    // frame/old 均为 RGBA8888 1280x720;mask 为 8-bit 灰度(mw×mh)。
+    static void BlendMaskPixels(uint8_t* frame, const uint8_t* oldPix,
+                                const uint8_t* mask, int maskW, int maskH,
+                                float progress);
+    // 把混合结果送回渲染管线:Switch 写回 softwareFrame_(Present 前),
+    // PC 上传临时纹理并 RenderCopy。
+    void PresentBlendedFrame(const std::vector<uint8_t>& blended);
     bool SaveScreenshot(const std::string& path);
     void DrawTexture(Tex* t, int x, int y, int w, int h, float alpha);
     // 绘制图集中的一个矩形区域。原版标题/系统 UI 都保存在 T0100、sys_* 图集中。
@@ -97,6 +114,8 @@ private:
     uint64_t frameSerial_ = 1;
     Tex snapshotTex_;
     SDL_Texture* snapshot_ = nullptr;
+    // PC 掩码混合结果的临时纹理(过渡期间复用,过渡结束释放)。
+    SDL_Texture* blendTex_ = nullptr;
     SDL_Texture* patchFontBody_ = nullptr;
     SDL_Texture* patchFontShadow_ = nullptr;
     std::vector<SDL_GameController*> controllers_;

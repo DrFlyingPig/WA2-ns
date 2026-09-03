@@ -45,3 +45,6 @@ Wa2Res/
 *.ogg
 font.ttf
 romfs/demo/
+
+# 归档:历史构建产物/日志/诊断(统一存放,方便整体回收)
+attic/

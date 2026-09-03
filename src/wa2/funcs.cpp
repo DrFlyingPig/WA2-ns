@@ -6,6 +6,7 @@
 #include "util.h"
 
 #include <cmath>
+#include <cstdlib>
 
 namespace wa2 {
 
@@ -264,9 +265,22 @@ bool Funcs::Call(Host& host, Script& sc, uint32_t idx, std::vector<Var>& args) {
     case 0xbd: host.SetBmpMove(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc)); return true;
     case 0xbe: host.SetBmpZoom(Arg(args, 0, sc), Arg(args, 1, sc), Arg(args, 2, sc),
                                (float)Arg(args, 3, sc), (float)Arg(args, 4, sc)); return true;
-    case 0xc1: // SetMovie(movieId, flagIdx):影片(占位实现)
-        host.PlayMovie(Arg(args, 0, sc), Arg(args, 1, sc));
+    case 0xc1: { // SetMovie('mvNN'|movieId, flagIdx):影片
+        // 字节码里电影参数是字符串("mv01"),Val::AsInt() 对 Str 返回 0,
+        // 必须按字符串解析两位编号;数字参数照旧。
+        int movieId = 0;
+        if (IsStrArg(args, 0)) {
+            const std::string s = ArgStr(args, 0, sc);
+            const size_t pos = s.find("mv");
+            movieId = pos != std::string::npos
+                ? std::atoi(s.c_str() + pos + 2) : std::atoi(s.c_str());
+        } else {
+            movieId = Arg(args, 0, sc);
+        }
+        Log(LogLevel::Info, "funcs: SetMovie id=%d flag=%d", movieId, Arg(args, 1, sc));
+        host.PlayMovie(movieId, Arg(args, 1, sc));
         return false;
+    }
 
     // ---------------- 计时/流程/旗标 ----------------
     case 0xc2: host.WaitMs(Arg(args, 0, sc) * kMsPerFrame); return false;

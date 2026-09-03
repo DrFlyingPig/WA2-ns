@@ -273,11 +273,7 @@ void Audio::Shutdown() {
         postEffectRegistered_ = false;
     }
     movieSrc_.store(nullptr, std::memory_order_release);
-    if (movieSilenceChunk_) {
-        Mix_HaltChannel(31);
-        Mix_FreeChunk(movieSilenceChunk_);
-        movieSilenceChunk_ = nullptr;
-    }
+    Mix_HookMusic(nullptr, nullptr);
     if (deviceOpen_) {
         StopAll();
         Log(LogLevel::Info, "audio: closing SDL_mixer device");
@@ -299,6 +295,7 @@ void Audio::EmergencyShutdown() {
     Log(LogLevel::Error, "audio: emergency shutdown begin");
     g_audio.store(nullptr, std::memory_order_release);
     Mix_HookMusicFinished(nullptr);
+    Mix_HookMusic(nullptr, nullptr);
 #ifdef __SWITCH__
     Mix_UnregisterAllEffects(MIX_CHANNEL_POST);
 #endif
@@ -333,6 +330,28 @@ void Audio::NotifyMusicFinished() {
 
 void Audio::Update() {
     if (noAudio_) return;
+    // 影片音频消费心跳:每秒输出一次,确认后混音回调是否真的在拉 ring。
+    {
+        static uint64_t lastCalls = 0, lastBytes = 0, lastZero = 0;
+        static uint32_t lastStatMs = 0;
+        const uint64_t calls = movieMixCalls_.load(std::memory_order_relaxed);
+        if (calls != lastCalls || movieMixBytes_.load(std::memory_order_relaxed) != lastBytes) {
+            const uint32_t nowMs = SDL_GetTicks();
+            if (nowMs - lastStatMs >= 1000) {
+                const uint64_t bytes = movieMixBytes_.load(std::memory_order_relaxed);
+                const uint64_t zero = movieMixZero_.load(std::memory_order_relaxed);
+                Log(LogLevel::Info,
+                    "audio: movie mix calls=%llu bytes=%llu zero=%llu (total)",
+                    (unsigned long long)(calls - lastCalls),
+                    (unsigned long long)(bytes - lastBytes),
+                    (unsigned long long)(zero - lastZero));
+                lastCalls = calls; lastBytes = bytes; lastZero = zero;
+                lastStatMs = nowMs;
+            }
+        } else {
+            lastStatMs = 0;
+        }
+    }
 #ifdef __SWITCH__
     PumpStreamSeDecoders();
     const size_t callbackStack = callbackStackBytes_.load(std::memory_order_acquire);
@@ -393,7 +412,8 @@ void SDLCALL Audio::StreamSePostEffect(int channel, void* stream, int len, void*
         }
         audio->MixStreamSe(stream, len);
 #endif
-        audio->MixMovieAudio(stream, len);
+        // 电影 PCM 改走 Mix_HookMusic(MovieMusicHook):MIX_CHANNEL_POST
+        // 效果链在真机上未被可靠调用,勿在此重复消费 ring。
     }
 }
 
@@ -402,43 +422,38 @@ void Audio::SetMovieAudioSource(MovieAudioSource* src) {
     SDL_LockAudio();
     movieSrc_.store(src, std::memory_order_release);
     if (src) {
-        // 实时回调的块最大不超过 Mix_OpenAudio 的缓冲(4096 字节),
-        // 这里一次分配到该上限之上,回调内就永远不再进堆。
-        if (movieMixScratch_.size() < 8192) movieMixScratch_.resize(8192);
-        // MIX_CHANNEL_POST 效果链只在"有通道在响"时被 SDL_mixer 调用。
-        // 电影期间没有其它通道活动,用一段循环静音块占住 31 号通道,
-        // 保证后混音回调持续执行,电影 PCM 才能进入输出。
-        if (!movieSilenceChunk_) {
-            // Mix_OpenAudio 用 4096 帧缓冲;1 秒静音足够任何回调块大小。
-            movieSilence_.assign(48000 * 2 * sizeof(int16_t), 0);
-            movieSilenceChunk_ = Mix_QuickLoad_RAW(movieSilence_.data(),
-                                                   (Uint32)movieSilence_.size());
-            if (movieSilenceChunk_) {
-                Mix_VolumeChunk(movieSilenceChunk_, 0);
-                Mix_PlayChannel(31, movieSilenceChunk_, -1);
-            } else {
-                Log(LogLevel::Warn, "audio: movie silence chunk failed: %s",
-                    Mix_GetError());
-            }
-        }
-    } else if (movieSilenceChunk_) {
-        Mix_HaltChannel(31);
-        Mix_FreeChunk(movieSilenceChunk_);
-        movieSilenceChunk_ = nullptr;
-        movieSilence_.clear();
-        movieSilence_.shrink_to_fit();
+        // Mix_OpenAudio(48000, S16, 2, 4096) 的 4096 是"样本数",单次回调
+        // 块实际为 4096 样本 × 2 声道 × 2 字节 = 16384 字节。scratch 按此
+        // 上限的 4 倍分配,回调内永远不再进堆。曾按 4096"字节"分配,导致
+        // 每次回调都在 scratch 校验处提前返回,环形缓冲无人消费。
+        if (movieMixScratch_.size() < 65536) movieMixScratch_.resize(65536);
+        // Mix_HookMusic 在混音回调里无条件执行,不依赖任何通道状态;
+        // 之前用 MIX_CHANNEL_POST + 静音块占通道的方案在真机上未被调用。
+        Mix_HookMusic(MovieMusicHook, this);
+    } else {
+        Mix_HookMusic(nullptr, nullptr);
     }
     SDL_UnlockAudio();
 }
 
+void SDLCALL Audio::MovieMusicHook(void* udata, Uint8* stream, int len) {
+    if (udata && stream && len > 0)
+        static_cast<Audio*>(udata)->MixMovieAudio(stream, len);
+}
+
 void Audio::MixMovieAudio(void* stream, int len) {
     if (noAudio_ || len <= 0) return;
+    movieMixCalls_.fetch_add(1, std::memory_order_relaxed);
     MovieAudioSource* src = movieSrc_.load(std::memory_order_acquire);
     if (!src) return;
     // 实时线程不做动态分配;scratch 在注册源时按设备缓冲上限预分配。
     if (movieMixScratch_.size() < (size_t)len) return;
     const size_t got = src->ReadMoviePcm(movieMixScratch_.data(), (size_t)len);
-    if (got == 0) return;
+    if (got == 0) {
+        movieMixZero_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    movieMixBytes_.fetch_add(got, std::memory_order_relaxed);
     const int gain = src->MovieVolume255() * MIX_MAX_VOLUME / 255;
     if (gain <= 0) return;
     auto* dst = static_cast<int16_t*>(stream);
