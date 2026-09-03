@@ -746,6 +746,7 @@ void Gfx::Clear() {
 }
 
 bool Gfx::PresentVideoFrameDirect(const uint8_t* bgra, int pitch) {
+#ifdef __SWITCH__
     // 安全版直通:视频帧直接写 softwareFrame_,随后调用方走常规 Present。
     // 与失败的 framebuffer 直通不同:显示提交链路(Present 的 swizzle/
     // framebufferEnd)原样保留,只省掉 UpdateTexture+RenderCopy 两层
@@ -765,6 +766,10 @@ bool Gfx::PresentVideoFrameDirect(const uint8_t* bgra, int pitch) {
     std::memcpy(softwareFrame_->pixels, bgra,
                 (size_t)softwareFrame_->pitch * kVirtualH);
     return true;
+#else
+    (void)bgra; (void)pitch;
+    return false;
+#endif
 }
 
 void Gfx::Present() {

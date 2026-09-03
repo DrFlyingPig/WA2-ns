@@ -414,6 +414,7 @@ static int SDLCALL DecodeThread(void* opaque) {
 
 #endif // WA2_HAS_FFMPEG
 
+#ifdef WA2_HAS_FFMPEG
 // ffmpeg 日志转接到项目 Log:默认实现走 fprintf(stderr),在 Switch 的
 // hbloader 环境下 stderr 的行为不可控,统一收口。
 static void SDLCALL wa2_av_log(void* /*avcl*/, int level, const char* fmt, va_list vl) {
@@ -424,12 +425,15 @@ static void SDLCALL wa2_av_log(void* /*avcl*/, int level, const char* fmt, va_li
     while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = 0;
     Log(level <= AV_LOG_ERROR ? LogLevel::Warn : LogLevel::Info, "ffmpeg: %s", buf);
 }
+#endif
 
 bool VideoPlayer::Init(SDL_Renderer* renderer) {
     if (!p_) p_ = new Impl();
     p_->renderer = renderer;
     p_->audio = audio_;
+#ifdef WA2_HAS_FFMPEG
     av_log_set_callback(wa2_av_log);
+#endif
     return renderer != nullptr;
 }
 
@@ -831,8 +835,13 @@ void VideoPlayer::Render() {
         ++draws;
         const uint32_t nowMs = SDL_GetTicks();
         if (nowMs - lastBeat >= 1000) {
+#ifdef WA2_HAS_FFMPEG
             Log(LogLevel::Info, "video: render draws/s=%llu pending_pts=%.3f",
                 (unsigned long long)(draws), p_->pendingPts);
+#else
+            Log(LogLevel::Info, "video: render draws/s=%llu",
+                (unsigned long long)(draws));
+#endif
             lastBeat = nowMs;
             draws = 0;
         }
@@ -841,8 +850,10 @@ void VideoPlayer::Render() {
 
 void VideoPlayer::PresentVideoFrame() {
     if (!p_ || !p_->playing || !p_->gfx) return;
+#ifdef WA2_HAS_FFMPEG
     if (p_->lastFrame.empty()) return;
     p_->gfx->PresentVideoFrameDirect(p_->lastFrame.data(), p_->width * 4);
+#endif
 }
 
 void VideoPlayer::Stop() {
