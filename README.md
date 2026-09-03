@@ -157,8 +157,10 @@ PC/无头测试与 Switch 共享同一套 VM 语义。
 - [wetor/LuckSystem](https://github.com/wetor/LuckSystem) 与
   [wetor/LucaSystemTools](https://github.com/wetor/LucaSystemTools) —
   LucaSystem(P/PS3/PSV 版)格式工具
-- [YuriSizuku/OnscripterYuri](https://github.com/YuriSizuku/OnscripterYuri) /
+- [YuriSizuku/OnscripterYuri](https://github.com/YuriSizuku/OnscripterYuri) 与
   [wetor/ONScripter-jh-Switch](https://github.com/wetor/ONScripter-jh-Switch) — Switch 端 VN 移植的构建模板与操作范式
+
+感谢以上作者及项目
 
 ## 📄 许可
 
