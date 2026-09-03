@@ -665,8 +665,10 @@ bool VideoPlayer::Play(const std::string& path, int volume255) {
 
     // POINT(最近邻):A57 上 720p 色彩转换比 BILINEAR 快约一半,视频观感
     // 差异可忽略;BILINEAR 在跳帧卡顿面前毫无意义。
+    // 目标必须是 RGBA:Switch 上视频帧经 memcpy 直写 softwareFrame_
+    // (SDL_PIXELFORMAT_RGBA32);曾用 BGRA,红蓝通道互换、画面整体偏蓝。
     p_->sws = sws_getContext(p_->width, p_->height, p_->videoCodec->pix_fmt,
-                             p_->width, p_->height, AV_PIX_FMT_BGRA,
+                             p_->width, p_->height, AV_PIX_FMT_RGBA,
                              SWS_POINT, nullptr, nullptr, nullptr);
     Log(LogLevel::Info, "video: sws ok");
     // 纹理复用:同尺寸重播直接沿用;销毁+重建 3.7MB STREAMING 纹理在
@@ -754,8 +756,14 @@ void VideoPlayer::Update() {
         if (tf.pts > elapsed + 0.5) break;   // 严重超前:等时钟
         p_->frames.PopFront();
         p_->pendingPts = tf.pts;
+#ifndef __SWITCH__
+        // PC:无 softwareFrame,走纹理 + Render 常规 blit。
+        SDL_UpdateTexture(p_->texture, nullptr, tf.bgra.data(), p_->width * 4);
+#else
+        // Switch:缓存最近帧,PresentVideoFrame 在 Render 后直写 softwareFrame。
         if (p_->lastFrame.empty()) p_->lastFrame.resize((size_t)p_->width * p_->height * 4);
         std::memcpy(p_->lastFrame.data(), tf.bgra.data(), p_->lastFrame.size());
+#endif
         ++consumed;
     }
     // 消费心跳:每秒一次,确认引擎线程的帧消费与上屏是否推进。
@@ -804,9 +812,19 @@ void VideoPlayer::Update() {
 }
 
 void VideoPlayer::Render() {
-    // 视频帧的呈现由 PresentVideoFrame 在引擎 Render() 之后执行——
-    // Render 开头的 Clear() 会清空 softwareFrame,直写必须发生在其后。
+    // Switch:视频帧由 PresentVideoFrame 在引擎 Render() 之后直写
+    // softwareFrame——Render 开头的 Clear() 会清空它,直写必须在其后,
+    // 这里不做任何绘制。PC:走纹理 blit(SDL 自动处理格式转换)。
     if (!p_ || !p_->playing) return;
+#ifndef __SWITCH__
+    if (!p_->texture) return;
+    const int outW = 1280, outH = 720;
+    const float scale = std::min(outW / (float)p_->width, outH / (float)p_->height);
+    SDL_Rect dst{(outW - (int)(p_->width * scale)) / 2,
+                 (outH - (int)(p_->height * scale)) / 2,
+                 (int)(p_->width * scale), (int)(p_->height * scale)};
+    SDL_RenderCopy(p_->renderer, p_->texture, nullptr, &dst);
+#endif
     {
         static uint32_t lastBeat = 0;
         static uint64_t draws = 0;
