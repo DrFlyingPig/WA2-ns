@@ -1,6 +1,8 @@
-# WA2-ns — 白色相簿2 Nintendo Switch 移植(原生引擎)
+# WA2-ns
 
-> 在 Nintendo Switch(homebrew)上原生运行《WHITE ALBUM2》PC 版数据的开源引擎项目。
+### 白色相簿 2 Nintendo Switch 原生移植引擎
+
+> 在 Nintendo Switch（Homebrew）上原生运行《WHITE ALBUM2》PC 版数据的开源引擎项目。
 
 [![Build](https://img.shields.io/github/actions/workflow/status/DrFlyingPig/WA2-ns/build.yml?branch=main&label=Build&style=flat-square)](https://github.com/DrFlyingPig/WA2-ns/actions/workflows/build.yml) ![Platform](https://img.shields.io/badge/platform-Switch%20%7C%20PC-blue?style=flat-square) ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
@@ -8,13 +10,13 @@
 
 ## ⚠️ 重要声明
 
-- 本项目是一个**开源引擎**,不包含、不分发任何《白色相簿2》的游戏资源
-  (脚本、图像、音频、视频均属 Leaf/Aquaplus/Prototype 版权所有)。
-- 要运行游戏,你需要**自行准备合法获得的 PC 版游戏数据**,并了解其格式
-  (格式逆向资料见 `docs/formats.md`,参考项目见文末)。
-- 内置的 `demo`(Tech Demo)是**原创占位内容**,仅用于验证引擎功能。
+- 本项目是一个**开源引擎**，不包含、不分发任何《白色相簿 2》的游戏资源。
+  脚本、图像、音频和视频均属 Leaf、Aquaplus、Prototype 版权所有。
+- 要运行游戏，你需要**自行准备合法获得的 PC 版游戏数据**，并了解其格式。
+  格式逆向资料见 [docs/formats.md](docs/formats.md)，参考项目见[文末](#参考与致谢)。
+- 内置的 `demo`（Tech Demo）是**原创占位内容**，仅用于验证引擎功能。
 
-## ✨ 当前状态(Tech Preview)
+## ✨ 当前状态 · Tech Preview
 
 | 功能 | 状态 |
 | --- | --- |
@@ -28,13 +30,13 @@
 | 特别模式：电子小说 / CG / 场景回放 / BGM / 声优访谈 | ✅ |
 | 全局进度：已读文本 / CG / 场景与音乐解锁 | ✅，兼容导入原版 `SYSTEM.sav` |
 | PC 影片播放 | ✅ 检测到 FFmpeg 开发库时启用 |
-| Switch 影片播放 | ✅ 私有最小 FFmpeg(asf/wmv3/wma,仅 LGPL 组件)软解,专用解码线程 + 后混音流式音频 |
+| Switch 影片播放 | ✅ 私有最小 FFmpeg（asf/wmv3/wma，仅 LGPL 组件）软解，专用解码线程 + 后混音流式音频 |
 
 ## 🎮 Switch 端使用
 
-1. 从 CI(Actions → Build → switch)下载 `wa2.nro`(或自行编译)
-2. 放入 SD 卡:`sdmc:/switch/WA2-ns/wa2.nro`
-3. 数据目录:`sdmc:/wa2/`
+1. 从 CI（Actions → Build → switch）下载 `wa2.nro`，或自行编译。
+2. 将文件放入 SD 卡：`sdmc:/switch/WA2-ns/wa2.nro`
+3. 准备数据目录：`sdmc:/wa2/`
    ```
    sdmc:/wa2/
      ├─ *.pak / *.pac     # 直接复制合法持有的 PC 版资源
@@ -46,11 +48,12 @@
    ```
 4. 从 HBMenu 启动。正式 NRO 不内置游戏数据；缺少 `sdmc:/wa2/` 时会显示错误并退出。
 
-无需转换或修改 PC 资源，也不要把任何游戏资源提交到本仓库。
+> [!IMPORTANT]
+> 无需转换或修改 PC 资源，也不要把任何游戏资源提交到本仓库。
 
-**操作**:A 推进/确认 · B 菜单返回 · Y 自动 · R 跳过 · L 回看 · +(Start)菜单 · 触屏点按
+**操作**：A 推进/确认 · B 菜单返回 · Y 自动 · R 跳过 · L 回看 · +（Start）菜单 · 触屏点按
 
-## 🖥️ PC 端(开发调试)
+## 🖥️ PC 端 · 开发调试
 
 ```bash
 # Linux
@@ -75,7 +78,7 @@ python tools/build_switch.py --devkitpro D:/devkitPro --release    # → wa2.nro
 python3 tools/build_switch.py --devkitpro "$DEVKITPRO" --release    # → wa2.nro
 ```
 
-推荐直接用 GitHub Actions 出包(已配置,见 `.github/workflows/build.yml`)。
+推荐直接使用已配置好的 [GitHub Actions](.github/workflows/build.yml) 出包。
 
 构建脚本会在首次运行时取得并锁定 devkitPro 的 SDL2 `switchout`
 (Audio Out)后端，只替换项目私有 SDL 静态库中的 Switch 音频对象；不会覆盖
@@ -122,7 +125,7 @@ PCM 环形缓冲，音频回调只读 PCM 并混音，避免实时线程单核�
 | `tools/pak.py` | PACK/LAC 列表、解包、打包(含 LZSS 压缩) |
 | `tools/gen_sjis.py` | 生成 SJIS→Unicode 映射表(`src/wa2/sjis_table.cpp`) |
 | `tools/gen_demo.py` | 生成原创 demo 数据包(验证引擎全功能) |
-| `tools/rebuild_ckgal_map.py` | 从合法持有的中文补丁数据离线重建字形映射 |
+| [`tools/rebuild_ckgal_map.py`](tools/rebuild_ckgal_map.py) | 从合法持有的中文补丁数据离线重建字形映射 |
 
 ## 📖 架构
 
@@ -139,24 +142,24 @@ src/wa2/
   engine.*    宿主实现/UI/输入/主循环      ┘
 ```
 
-核心层与平台层的边界是 `Host` 接口(`funcs.h`):脚本 VM 只跟 Host 对话,
-PC/无头测试与 Switch 共享同一套 VM 语义。
+核心层与平台层的边界是 [`Host` 接口](src/wa2/funcs.h)：脚本 VM 只跟 Host 对话，
+PC、无头测试与 Switch 共享同一套 VM 语义。
 
 ## 🗺️ Roadmap
 
-2. 用真实游戏数据做逐函数对拍(未知函数号补齐 `funcs.cpp`)
-4. 多语言(中文补丁数据需要 CP932 自定义映射,参考 reference/)
-5. 触屏 UI 完整化(拖动/捏合、菜单手势)
+1. 用真实游戏数据做逐函数对拍，补齐 `funcs.cpp` 中的未知函数号。
+2. 支持多语言（中文补丁数据需要 CP932 自定义映射，参考 [reference/](reference/)）。
+3. 完善触屏 UI（拖动、捏合和菜单手势）。
 
 ## 📚 参考与致谢
 
-以下社区成果是本项目的前提:
+以下社区成果是本项目的前提：
 
 - [dorakyuraduang/wa2-godot](https://github.com/dorakyuraduang/wa2-godot) —
-  PC 版引擎重实现(Godot/C#)以作学习参考
+  PC 版引擎重实现（Godot/C#），以作学习参考
 - [wetor/LuckSystem](https://github.com/wetor/LuckSystem) 与
   [wetor/LucaSystemTools](https://github.com/wetor/LucaSystemTools) —
-  LucaSystem(P/PS3/PSV 版)格式工具
+  LucaSystem（P/PS3/PSV 版）格式工具
 - [YuriSizuku/OnscripterYuri](https://github.com/YuriSizuku/OnscripterYuri) 与
   [wetor/ONScripter-jh-Switch](https://github.com/wetor/ONScripter-jh-Switch) — Switch 端 VN 移植的构建模板与操作范式
 
@@ -164,5 +167,4 @@ PC/无头测试与 Switch 共享同一套 VM 语义。
 
 ## 📄 许可
 
-引擎与工具:MIT(见 `LICENSE`)。游戏数据归其版权方所有。
-`reference/` 目录内容不属于本许可范围,仅供本地学习,请勿再分发。
+引擎与工具：MIT（见 [LICENSE](LICENSE)）。游戏数据归其版权方所有。
